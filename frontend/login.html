@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Login · VENOM AI</title>
+<link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@300;400;600;800&family=JetBrains+Mono:wght@400;500;600&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/auth.css">
+</head>
+<body>
+<div class="auth-card">
+  <div class="auth-brand">
+    <div class="auth-brand-icon venom-logo"></div>
+    <div class="auth-brand-name">VENOM AI</div>
+    <div class="auth-brand-tag">Network Offensive Monitoring</div>
+  </div>
+
+  <h1 class="auth-title">Welcome back</h1>
+  <p class="auth-sub">Sign in to your account to continue scanning, monitoring, and chatting with VENOM AI.</p>
+
+  <div id="msg" class="auth-msg"></div>
+
+  <form id="login-form" novalidate>
+    <div class="auth-field">
+      <label class="auth-label" for="email">Email</label>
+      <input class="auth-input" id="email" type="email" placeholder="you@example.com" required autocomplete="email" autofocus>
+    </div>
+    <div class="auth-field">
+      <label class="auth-label" for="password">Password</label>
+      <input class="auth-input" id="password" type="password" placeholder="••••••••" required autocomplete="current-password">
+      <div style="text-align:right;margin-top:6px">
+        <a href="/forgot-password.html" class="auth-link" style="font-size:11px">Forgot password?</a>
+      </div>
+    </div>
+    <button type="submit" id="submit-btn" class="auth-btn">Sign In</button>
+  </form>
+
+  <div id="oauth-block" style="display:none">
+    <div class="auth-divider">OR</div>
+    <button type="button" id="google-btn" class="auth-btn-secondary">
+      <svg width="18" height="18" viewBox="0 0 18 18">
+        <path d="M17.6 9.2c0-.6-.1-1.2-.2-1.7H9v3.3h4.8c-.2 1.1-.8 2-1.8 2.7v2.2h2.9c1.7-1.6 2.7-3.9 2.7-6.5z" fill="#4285F4"/>
+        <path d="M9 18c2.4 0 4.5-.8 6-2.2l-2.9-2.2c-.8.5-1.8.9-3.1.9-2.4 0-4.4-1.6-5.1-3.8H.9v2.3C2.4 15.9 5.5 18 9 18z" fill="#34A853"/>
+        <path d="M3.9 10.7c-.2-.5-.3-1.1-.3-1.7s.1-1.2.3-1.7V5h-3C.3 6.2 0 7.6 0 9s.3 2.8.9 4l3-2.3z" fill="#FBBC05"/>
+        <path d="M9 3.6c1.3 0 2.5.5 3.5 1.3l2.6-2.6C13.5.9 11.4 0 9 0 5.5 0 2.4 2.1.9 5l3 2.3C4.6 5.2 6.6 3.6 9 3.6z" fill="#EA4335"/>
+      </svg>
+      Continue with Google
+    </button>
+  </div>
+
+  <div class="auth-footer">
+    New to VENOM AI? <a href="/signup.html" class="auth-link">Create an account</a>
+  </div>
+</div>
+
+<script src="/auth.js"></script>
+<script>
+VenomAuth.redirectIfLoggedIn('/');
+
+const form = document.getElementById('login-form');
+const msg  = document.getElementById('msg');
+const btn  = document.getElementById('submit-btn');
+
+function showMsg(text, type='error') {
+  msg.className = 'auth-msg show ' + type;
+  msg.textContent = text;
+}
+function clearMsg() { msg.className = 'auth-msg'; msg.textContent = ''; }
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  clearMsg();
+  const email = document.getElementById('email').value.trim();
+  const password = document.getElementById('password').value;
+  if (!email || !password) { showMsg('Please enter your email and password.'); return; }
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Signing in...';
+  try {
+    const r = await fetch(VenomAuth.getApiBase() + '/api/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await r.json();
+    if (r.status === 429) {
+      // Rate limit hit — show countdown and re-enable after 60s
+      let secs = 60;
+      const tick = setInterval(() => {
+        secs--;
+        btn.textContent = `Too many attempts — wait ${secs}s`;
+        if (secs <= 0) { clearInterval(tick); btn.disabled = false; btn.textContent = 'Sign In'; }
+      }, 1000);
+      showMsg('Too many login attempts. Please wait 60 seconds before trying again.', 'error');
+      return;
+    }
+    if (!r.ok) { showMsg(data.detail || 'Sign-in failed.'); btn.disabled = false; btn.textContent = 'Sign In'; return; }
+    VenomAuth.setSession(data);
+    showMsg('Welcome back — redirecting...', 'success');
+    const params = new URLSearchParams(location.search);
+    const next = params.get('next') || '/';
+    setTimeout(() => location.href = next, 350);
+  } catch (err) {
+    showMsg('Network error — is the API running?');
+    btn.disabled = false; btn.textContent = 'Sign In';
+  }
+});
+
+// Check which auth providers are available
+(async () => {
+  try {
+    const r = await fetch(VenomAuth.getApiBase() + '/api/auth/providers');
+    if (r.ok) {
+      const p = await r.json();
+      if (p.google) {
+        document.getElementById('oauth-block').style.display = 'block';
+        document.getElementById('google-btn').addEventListener('click', () => {
+          location.href = VenomAuth.getApiBase() + '/api/auth/google';
+        });
+      }
+    }
+  } catch {}
+})();
+</script>
+</body>
+</html>

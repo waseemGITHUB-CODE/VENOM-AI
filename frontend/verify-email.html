@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Verify Email · VENOM AI</title>
+<link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@300;400;600;800&family=JetBrains+Mono:wght@400;500;600&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/auth.css">
+</head>
+<body>
+<div class="auth-card" style="text-align:center">
+  <div class="auth-brand">
+    <div class="auth-brand-icon venom-logo"></div>
+    <div class="auth-brand-name">VENOM AI</div>
+    <div class="auth-brand-tag">Email Verification</div>
+  </div>
+
+  <h1 class="auth-title" id="title">Verifying your email...</h1>
+  <p class="auth-sub" id="sub">Just a moment while we confirm your token.</p>
+
+  <div id="msg" class="auth-msg"></div>
+
+  <div id="actions" style="display:none">
+    <a href="/" class="auth-btn" style="text-decoration:none;display:block;text-align:center" id="primary-cta">Continue to Dashboard</a>
+    <div class="auth-footer">
+      Need a new link? <a href="#" id="resend-link" class="auth-link">Resend verification email</a>
+    </div>
+  </div>
+</div>
+
+<script src="/auth.js"></script>
+<script>
+const titleEl = document.getElementById('title');
+const subEl   = document.getElementById('sub');
+const msg     = document.getElementById('msg');
+const actions = document.getElementById('actions');
+
+const token = new URLSearchParams(location.search).get('token');
+
+function showMsg(text, type='info') {
+  msg.className = 'auth-msg show ' + type;
+  msg.textContent = text;
+}
+
+async function verify() {
+  if (!token) {
+    titleEl.textContent = 'Missing token';
+    subEl.textContent = 'This verification link is missing its token. Use the link from your email.';
+    showMsg('No verification token was provided in the URL.', 'error');
+    actions.style.display = 'block';
+    return;
+  }
+  try {
+    const r = await fetch(VenomAuth.getApiBase() + '/api/auth/verify-email', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
+    const data = await r.json();
+    if (r.ok) {
+      titleEl.textContent = 'Email verified ✓';
+      subEl.textContent = 'Your account is fully activated. Welcome to VENOM AI.';
+      showMsg('Verification successful — you can now use all features.', 'success');
+      // Refresh stored user if logged in
+      if (VenomAuth.isLoggedIn()) await VenomAuth.refreshMe();
+    } else {
+      titleEl.textContent = 'Verification failed';
+      subEl.textContent = 'This link may have expired or already been used.';
+      showMsg(data.detail || 'Invalid or expired verification link.', 'error');
+    }
+  } catch {
+    titleEl.textContent = 'Network error';
+    showMsg('Could not reach the API. Try again in a moment.', 'error');
+  }
+  actions.style.display = 'block';
+}
+verify();
+
+document.getElementById('resend-link').addEventListener('click', async (e) => {
+  e.preventDefault();
+  const user = VenomAuth.getUser();
+  const email = user?.email || prompt('Enter your email to resend the verification link:');
+  if (!email) return;
+  await fetch(VenomAuth.getApiBase() + '/api/auth/resend-verification', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
+  showMsg('If your account is unverified, a new link has been sent.', 'success');
+});
+</script>
+</body>
+</html>

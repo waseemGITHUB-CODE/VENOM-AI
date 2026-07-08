@@ -1,0 +1,123 @@
+# ==========================================================================
+#  VENOM AI — .gitignore
+#  CRITICAL: never commit secrets, credentials, or generated data.
+# ==========================================================================
+
+# ── Secrets & environment ─────────────────────────────────────────────────
+# The real .env holds API keys — NEVER commit it. Users copy .env.example.
+.env
+.env.local
+.env.production
+.env.dev
+*.env
+!.env.example
+backend/.env
+backend/.env.local
+backend/.env.production
+backend/.env.txt
+*.env.txt
+
+# ── Python ────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── Node / frontend ───────────────────────────────────────────────────────
+node_modules/
+mcp-server/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+
+# ── Database & data ───────────────────────────────────────────────────────
+postgres_data/
+redis_data/
+database/
+*.sqlite3
+*.db
+*.dump
+*.sql.gz
+
+# ── Uploads & generated reports (user data) ───────────────────────────────
+backend/uploads/*
+backend/reports/*
+uploads/*
+reports/*
+scan_results/
+!backend/uploads/.gitkeep
+!backend/reports/.gitkeep
+
+# ── Celery ────────────────────────────────────────────────────────────────
+celerybeat-schedule
+celerybeat.pid
+
+# ── Alembic ───────────────────────────────────────────────────────────────
+alembic/versions/*.pyc
+
+# ── IDE / editor ──────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── OS ────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Logs ──────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Internal dev backups (not for public repo) ────────────────────────────
+_backup/
+_backup_phase2a/
+frontend/_backup/
+frontend/_backup_phase2a/
+_removed_payment_backup/
+IMPROVEMENT_PLAN.md
+
+# ── Stray brace-expansion folders (accidental mkdir artifacts) ─────────────
+{backend/
+{frontend,backend,workers,docs}/
+
+# ── Runtime data & scan artifacts (NEVER publish — contains user/target data) ──
+# User chat history
+chat_sessions/
+backend/chat_sessions/
+# Raw scanner output files (Nikto/Nmap/Nuclei) — may contain third-party target data
+nikto_*.json
+backend/nikto_*.json
+nmap_*.xml
+backend/nmap_*.xml
+nuclei_*.json
+backend/nuclei_*.json
+# Generated reports & user uploads (keep the dirs, ignore the contents)
+reports/*
+!reports/.gitkeep
+uploads/*
+!uploads/.gitkeep
+backend/reports/*
+backend/uploads/*
+# Self-learning AI knowledge base — accumulates the user's own chats/scans at runtime
+venom_knowledge.json
+backend/venom_knowledge.json
+
+# ── Claude / AI assistant memory (personal, do not publish) ───────────────
+.claude/
+CLAUDE.md

@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Verify Your Email · VENOM AI</title>
+<link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@300;400;600;800&family=JetBrains+Mono:wght@400;500;600&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/auth.css">
+<style>
+  .pending-icon {
+    width: 64px; height: 64px; margin: 0 auto 22px;
+    border-radius: 16px;
+    background: linear-gradient(135deg, rgba(57,255,20,0.15), rgba(0,200,255,0.06));
+    border: 1px solid rgba(57,255,20,0.3);
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 0 30px rgba(57,255,20,0.15);
+  }
+  .info-row {
+    background: rgba(57,255,20,0.04);
+    border: 1px solid rgba(57,255,20,0.12);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin: 20px 0;
+    text-align: left;
+    font-size: 12.5px; line-height: 1.6;
+    color: var(--text);
+  }
+  .info-row b { color: var(--green); }
+  .check-status {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; color: var(--muted);
+    margin-top: 18px; letter-spacing: .5px;
+  }
+  .auth-btn-secondary {
+    background: transparent;
+    color: var(--green);
+    border: 1px solid rgba(57,255,20,0.35);
+    padding: 12px 22px;
+    border-radius: 9px;
+    font-weight: 700; cursor: pointer;
+    font-family: 'Exo 2', sans-serif; font-size: 13px;
+    letter-spacing: .5px; text-transform: uppercase;
+    width: 100%; margin-top: 10px;
+    transition: background .2s, box-shadow .2s;
+  }
+  .auth-btn-secondary:hover { background: rgba(57,255,20,0.07); box-shadow: 0 0 18px rgba(57,255,20,0.2); }
+  .signout-link {
+    display: inline-block; margin-top: 18px;
+    color: var(--muted); font-size: 12px;
+    text-decoration: none; cursor: pointer;
+  }
+  .signout-link:hover { color: #ff5566; }
+</style>
+</head>
+<body>
+<div class="auth-card" style="text-align:center;max-width:480px">
+  <div class="pending-icon">
+    <svg width="32" height="32" viewBox="0 0 24 24" fill="none">
+      <path d="M3 7l9 6 9-6M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7M3 7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2"
+            stroke="#39ff14" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+  </div>
+
+  <h1 class="auth-title">Check your inbox</h1>
+  <p class="auth-sub">We sent a verification link to <b id="user-email" style="color:var(--green)">your email</b>.<br>
+  Click the link in that email to activate your VENOM AI account.</p>
+
+  <div class="info-row">
+    <b>Why verify?</b><br>
+    Email verification protects your scans, reports, and security findings from unauthorized access. It also lets us send breach alerts to a confirmed address.
+  </div>
+
+  <div id="msg" class="auth-msg" style="display:none"></div>
+
+  <button id="resend-btn" class="auth-btn" onclick="resendEmail()">Resend Verification Email</button>
+  <button class="auth-btn-secondary" onclick="checkVerified()">I've Verified — Continue</button>
+
+  <div class="check-status" id="check-status"></div>
+
+  <a class="signout-link" onclick="signOut()">Sign out and use a different email →</a>
+</div>
+
+<script src="/auth.js"></script>
+<script>
+const msg          = document.getElementById('msg');
+const resendBtn    = document.getElementById('resend-btn');
+const statusEl     = document.getElementById('check-status');
+const emailEl      = document.getElementById('user-email');
+
+function showMsg(text, type='info') {
+  msg.className = 'auth-msg show ' + type;
+  msg.textContent = text;
+  msg.style.display = 'block';
+}
+
+// Show the user's email
+(function () {
+  if (!window.VenomAuth || !VenomAuth.isLoggedIn()) {
+    location.replace('/login.html');
+    return;
+  }
+  const u = VenomAuth.getUser();
+  if (u && u.email) emailEl.textContent = u.email;
+})();
+
+// Auto-poll every 5 seconds for verification status — auto-redirect when done
+async function poll() {
+  try {
+    const fresh = await VenomAuth.refreshMe();
+    if (fresh && fresh.is_verified) {
+      statusEl.textContent = '✓ Verified — redirecting…';
+      statusEl.style.color = '#39ff14';
+      setTimeout(() => location.replace('/'), 700);
+      return true;
+    }
+  } catch (_) {}
+  return false;
+}
+
+let pollCount = 0;
+const pollTimer = setInterval(async () => {
+  pollCount++;
+  statusEl.textContent = `Checking verification status… (${pollCount})`;
+  const done = await poll();
+  if (done) clearInterval(pollTimer);
+}, 5000);
+
+async function resendEmail() {
+  resendBtn.disabled = true;
+  resendBtn.textContent = 'Sending…';
+  try {
+    const u = VenomAuth.getUser();
+    const r = await VenomAuth.authFetch('/api/auth/resend-verification', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: u?.email || '' }),
+    });
+    if (r.ok) {
+      showMsg('✓ Verification email sent! Check your inbox (and spam folder).', 'success');
+    } else {
+      const err = await r.json().catch(() => ({}));
+      showMsg(err.detail || 'Could not resend. Try again in a minute.', 'error');
+    }
+  } catch (_) {
+    showMsg('Network error — please try again.', 'error');
+  } finally {
+    setTimeout(() => {
+      resendBtn.disabled = false;
+      resendBtn.textContent = 'Resend Verification Email';
+    }, 3000);
+  }
+}
+
+async function checkVerified() {
+  statusEl.textContent = 'Refreshing status…';
+  const done = await poll();
+  if (!done) {
+    showMsg('Still not verified — please click the link in your email first.', 'error');
+  }
+}
+
+async function signOut() {
+  try { await VenomAuth.logout(); } catch (_) {}
+  location.replace('/login.html');
+}
+</script>
+</body>
+</html>

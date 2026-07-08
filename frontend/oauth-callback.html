@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Signing You In · VENOM AI</title>
+<link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@300;400;600;800&family=JetBrains+Mono:wght@400;500;600&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/auth.css">
+</head>
+<body>
+<div class="auth-card" style="text-align:center">
+  <div class="auth-brand">
+    <div class="auth-brand-icon venom-logo"></div>
+    <div class="auth-brand-name">VENOM AI</div>
+    <div class="auth-brand-tag">Authenticating</div>
+  </div>
+  <h1 class="auth-title"><span class="spinner" style="width:18px;height:18px;border-top-color:#39ff14;border-color:rgba(57,255,20,.25)"></span> Signing you in...</h1>
+  <p class="auth-sub" id="status">Completing your Google sign-in. This takes a second.</p>
+  <div id="msg" class="auth-msg"></div>
+</div>
+
+<script src="/auth.js"></script>
+<script>
+(async () => {
+  // Tokens come back in the URL hash so they don't hit server logs
+  const params = new URLSearchParams(location.hash.slice(1));
+  const access_token  = params.get('access_token');
+  const refresh_token = params.get('refresh_token');
+
+  const msg = document.getElementById('msg');
+
+  if (!access_token || !refresh_token) {
+    msg.className = 'auth-msg show error';
+    msg.textContent = 'Sign-in failed — no tokens received. Try again from the login page.';
+    setTimeout(() => location.href = '/login.html', 2500);
+    return;
+  }
+
+  // Store tokens
+  VenomAuth.setSession({ access_token, refresh_token });
+
+  // Fetch user profile
+  const user = await VenomAuth.refreshMe();
+  if (user) {
+    document.getElementById('status').textContent = 'Welcome, ' + (user.full_name || user.email) + '!';
+    history.replaceState(null, '', '/oauth-callback.html');  // clean URL
+    setTimeout(() => location.href = '/', 600);
+  } else {
+    msg.className = 'auth-msg show error';
+    msg.textContent = 'Could not load your profile. Please try signing in again.';
+    setTimeout(() => location.href = '/login.html', 2500);
+  }
+})();
+</script>
+</body>
+</html>

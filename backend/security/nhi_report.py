@@ -1,0 +1,108 @@
+"""
+VENOM AI — NHI (Secret Scanner) PDF Report Builder
+Builds a PDF from the stateless NHI scan result. Uses ReportLab.
+"""
+from __future__ import annotations
+
+import io
+from datetime import datetime, timezone
+from typing import List, Dict
+
+from reportlab.lib.pagesizes import A4
+from reportlab.lib import colors
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib.units import mm
+from reportlab.lib.enums import TA_CENTER
+from reportlab.platypus import (
+    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable,
+)
+
+_SEV_HEX = {"critical": "#e53935", "high": "#fb8c00", "medium": "#f9a825",
+            "low": "#00c853", "info": "#4fc3f7"}
+
+
+def _esc(s) -> str:
+    s = "" if s is None else str(s)
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def build_nhi_pdf(target_url: str, findings: List[Dict],
+                  js_files_scanned: int = 0, summary: str = "") -> bytes:
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm,
+        topMargin=16 * mm, bottomMargin=16 * mm,
+        title=f"VENOM NHI Report — {target_url}", author="VENOM AI")
+
+    DARK = colors.HexColor("#0a0f18")
+    ACID = colors.HexColor("#2fbf3f")
+    TEXT = colors.HexColor("#1c2333")
+    MUTED = colors.HexColor("#6b7a99")
+
+    def P(name, **kw):
+        base = dict(fontName="Helvetica", fontSize=9.5, textColor=TEXT, leading=14)
+        base.update(kw); return ParagraphStyle(name, **base)
+
+    h1 = P("h1", fontName="Helvetica-Bold", fontSize=22, textColor=DARK, leading=26, spaceAfter=2)
+    sub = P("sub", fontSize=10, textColor=MUTED, leading=14, spaceAfter=10)
+    h2 = P("h2", fontName="Helvetica-Bold", fontSize=13, textColor=DARK, leading=17, spaceBefore=12, spaceAfter=5)
+    body = P("body", fontSize=9.5, textColor=TEXT, leading=14, spaceAfter=3)
+    label = P("label", fontName="Helvetica-Bold", fontSize=8, textColor=MUTED, leading=11, spaceBefore=4)
+    mono = P("mono", fontName="Courier", fontSize=8, textColor=colors.HexColor("#1b4332"), leading=11)
+    small = P("small", fontSize=8, textColor=MUTED, leading=11, alignment=TA_CENTER)
+
+    story = []
+    story.append(Paragraph("VENOM — NHI / Secret Scanner Report", h1))
+    story.append(Paragraph(
+        f"Non-Human Identity & Exposed Credential Detection · "
+        f"Generated {datetime.now(timezone.utc).strftime('%d %b %Y %H:%M UTC')}", sub))
+    story.append(HRFlowable(width="100%", thickness=1, color=ACID, spaceAfter=8))
+
+    meta = [
+        ["Target", target_url or "—"],
+        ["JS files scanned", str(js_files_scanned)],
+        ["Secrets found", str(len(findings))],
+        ["Summary", summary or "—"],
+    ]
+    t = Table([[Paragraph(f"<b>{k}</b>", label), Paragraph(_esc(v), body)] for k, v in meta],
+              colWidths=[40 * mm, None])
+    t.setStyle(TableStyle([
+        ("LINEBELOW", (0, 0), (-1, -2), 0.25, colors.HexColor("#e5e8ee")),
+        ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]))
+    story.append(t)
+
+    if findings:
+        story.append(HRFlowable(width="100%", thickness=1, color=ACID, spaceBefore=14, spaceAfter=4))
+        story.append(Paragraph(f"Exposed Secrets ({len(findings)})", h2))
+        for i, f in enumerate(findings, 1):
+            sev = (f.get("severity") or "high").lower()
+            col = _SEV_HEX.get(sev, "#6b7a99")
+            title = f.get("title") or f.get("type") or "Exposed Secret"
+            story.append(Paragraph(f'<font color="{col}"><b>#{i} · [{sev.upper()}]</b></font> {_esc(title)}', h2))
+            if f.get("affected_url") or f.get("url"):
+                story.append(Paragraph("Location", label))
+                story.append(Paragraph(_esc(f.get("affected_url") or f.get("url")), mono))
+            if f.get("source_label"):
+                story.append(Paragraph("Source", label))
+                story.append(Paragraph(_esc(f.get("source_label")), body))
+            if f.get("evidence"):
+                story.append(Paragraph("Evidence", label))
+                story.append(Paragraph(_esc(f.get("evidence")), mono))
+            if f.get("description"):
+                story.append(Paragraph("Description", label))
+                story.append(Paragraph(_esc(f.get("description")), body))
+            if f.get("recommendation"):
+                story.append(Paragraph("Recommended Fix", label))
+                story.append(Paragraph(_esc(f.get("recommendation")), body))
+            story.append(HRFlowable(width="100%", thickness=0.4, color=colors.HexColor("#e5e8ee"),
+                                    spaceBefore=6, spaceAfter=4))
+    else:
+        story.append(Spacer(1, 10))
+        story.append(Paragraph("No exposed secrets were detected. ✓", body))
+
+    story.append(Spacer(1, 10))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#e5e8ee")))
+    story.append(Paragraph("Generated by VENOM AI · For authorized security testing only.", small))
+
+    doc.build(story)
+    return buf.getvalue()
