@@ -116,13 +116,13 @@ Full setup instructions for each key are inside [`backend/.env.example`](backend
 Groq's free tier limits requests **per key per day**. VENOM supports **up to 4 keys** and rotates automatically:
 
 ```
-GROQ_API_KEY    ->  tried first
+GROQ_API_KEY_1  ->  tried first
 GROQ_API_KEY_2  ->  used if key 1 hits its rate limit (HTTP 429)
 GROQ_API_KEY_3  ->  used if key 2 is also limited
 GROQ_API_KEY_4  ->  final fallback
 ```
 
-Just make a few free Groq accounts, drop the extra keys into `GROQ_API_KEY_2/3/4`, and VENOM stretches your free quota up to 4× automatically. **One key is enough to start** — add more only if you scan heavily.
+Just make a few free Groq accounts, drop the extra keys into `GROQ_API_KEY_1/2/3/4`, and VENOM stretches your free quota up to 4× automatically. **One key is enough to start** — add more only if you scan heavily.
 
 ---
 
