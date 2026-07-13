@@ -8,7 +8,7 @@ If you discover a security vulnerability **in VENOM AI's own code** (not in a ta
 
 Instead:
 
-1. Email the maintainers at: **[your-security-email@example.com]** *(replace with your address)*
+1. Email the maintainers at: venomaisecurity@gmail.com
 2. Include:
    - A description of the vulnerability
    - Steps to reproduce
