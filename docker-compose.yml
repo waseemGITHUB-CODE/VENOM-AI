@@ -30,6 +30,23 @@ services:
       interval: 5s
       retries: 10
 
+  # ── OWASP ZAP (Deep Scan engine — Burp-grade DAST via REST API) ────────────
+  zap:
+    image: ghcr.io/zaproxy/zaproxy:stable
+    container_name: cyber_zap
+    command: >
+      zap.sh -daemon -host 0.0.0.0 -port 8080
+      -config api.key=zap-api-key
+      -config api.addrs.addr.name=.*
+      -config api.addrs.addr.regex=true
+    ports:
+      - "8090:8080"      # host 8090 → ZAP 8080 (for debugging; not required)
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/JSON/core/view/version/?apikey=zap-api-key"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
   # ── FastAPI Backend ────────────────────────────────────────────────────────
   api:
     build:
@@ -37,6 +54,13 @@ services:
       dockerfile: Dockerfile
     container_name: cyber_api
     env_file: ./backend/.env
+    environment:
+      ZAP_API_URL: http://zap:8080
+      ZAP_API_KEY: zap-api-key
+      # Reach the user's Ollama running on the HOST machine (fallback when Groq is busy)
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./backend:/app
       - uploads_data:/app/uploads
@@ -57,6 +81,12 @@ services:
       dockerfile: Dockerfile
     container_name: cyber_worker
     env_file: ./backend/.env
+    environment:
+      ZAP_API_URL: http://zap:8080
+      ZAP_API_KEY: zap-api-key
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./backend:/app
       - uploads_data:/app/uploads

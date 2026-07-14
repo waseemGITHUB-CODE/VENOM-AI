@@ -121,3 +121,6 @@ backend/venom_knowledge.json
 # ── Claude / AI assistant memory (personal, do not publish) ───────────────
 .claude/
 CLAUDE.md
+
+# Codex CLI local config (machine-specific paths)
+.codex/

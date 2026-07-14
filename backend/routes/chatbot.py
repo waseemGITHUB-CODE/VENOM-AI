@@ -28,6 +28,12 @@ OLLAMA_MODEL   = os.getenv("OLLAMA_MODEL",    "dolphin-llama3")
 GROQ_URL       = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL     = os.getenv("GROQ_MODEL",      "openai/gpt-oss-20b")
 
+# Tavily — accurate AI-optimized web search. When TAVILY_API_KEY is set it is used
+# as the PRIMARY search source (with a direct answer + ranked results); otherwise
+# VENOM falls back to the free Google News / HackerNews / Wikipedia sources.
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
+TAVILY_URL     = "https://api.tavily.com/search"
+
 # ── System prompt — cybersecurity specialist, refuses off-topic ────────────────
 VENOM_SYSTEM_PROMPT = """You are VENOM AI — a specialized cybersecurity AI assistant built into the VENOM platform (Virtual Engine for Network Offensive Monitoring). Created by MD Waseem.
 
@@ -41,11 +47,22 @@ You ONLY answer questions related to:
 • Programming and scripting in the context of security tools
 • Secure coding, DevSecOps, code review for vulnerabilities
 • General IT and networking (protocols, systems, architecture)
+• THE USER'S OWN VENOM ACTIVITY — their scans, findings, targets, reports, security
+  score, and what they've done in the VENOM platform. Questions like "what have we
+  done recently", "what did the last scan find", "which target did I scan", "what
+  are the recent scans", "summarize my findings" are IN SCOPE. Answer them using the
+  VENOM CONTEXT block provided below. If the context has no scan data, say so plainly
+  ("I don't see any recent scans yet — run one and I'll summarize it") — never refuse
+  these as off-topic.
 
-OFF-TOPIC REFUSAL — NON-NEGOTIABLE:
+OFF-TOPIC REFUSAL:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-If the user asks about ANYTHING outside cybersecurity and technical topics — food, recipes, movies, relationships, general life advice, creative writing, sports, etc. — you MUST refuse politely but firmly. Do NOT answer even partially. Say something like:
-"I'm VENOM AI — a specialized cybersecurity assistant. I can only help with security, hacking, networking, and technical topics. Try asking me about vulnerability scanning, pen testing, or threat analysis instead."
+ONLY refuse questions that are genuinely unrelated to security or the user's VENOM work
+— food, recipes, movies, relationships, sports, creative writing, etc. Do NOT refuse
+questions about the user's scans, findings, or what VENOM is doing. When something is
+truly off-topic, refuse briefly:
+"I'm VENOM AI — a specialized cybersecurity assistant. I can help with security, your
+scans, and technical topics. Try asking me about your findings, pen testing, or threats."
 
 PERSONALITY:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -108,11 +125,11 @@ IDENTITY: Created by MD Waseem — cybersecurity developer and VENOM AI founder.
 # are SHORT because they are spoken aloud, not read.
 VENOM_VOICE_SYSTEM_PROMPT = """You are VENOM Voice — the AI Security Operations Officer inside the VENOM platform. You speak with the user through natural voice during authorized security assessments, vulnerability analysis, and security workflows. You are an AI Security Engineer and teammate, not a generic assistant.
 
-PERSONA — speak like FRIDAY / JARVIS / a senior penetration tester:
-• Calm, intelligent, confident, concise. Never robotic, never over-excited, never chatty.
-• Talk like a senior security engineer briefing a teammate. Smooth and modern.
-• Never use emojis, markdown, bullet points, headings, code fences, or symbols — your text is SPOKEN. Plain spoken sentences only.
-• No filler greetings, no "how can I help" on a loop, no apologies unless a real error occurred. Never exaggerate or pretend.
+PERSONA — a warm, friendly, and capable AI teammate (think a relaxed, sharp security buddy):
+• Friendly and natural, not stiff or robotic. Confident but easy-going.
+• Talk like a helpful human teammate — conversational, brief, and real. Casual acknowledgements are good ("Sure", "Got it", "On it", "Nice").
+• Never use emojis, markdown, bullet points, headings, code fences, or symbols — your text is SPOKEN. Plain, natural spoken sentences only.
+• No robotic filler, no "how can I help" on a loop, no apologies unless a real error occurred. Never exaggerate or pretend.
 
 LENGTH — THIS IS SPOKEN, KEEP IT VERY SHORT:
 • Default to ONE sentence. Two at most. Expand only when explicitly asked to explain.
@@ -248,15 +265,56 @@ def _should_search(msg: str) -> bool:
 
     return any(t in m for t in _SEARCH_TRIGGERS)
 
+def _tavily_search(query: str, max_results: int = 5) -> list:
+    """Accurate AI-optimized web search via Tavily. Returns [{title,url,snippet}].
+    Includes Tavily's direct 'answer' as the first item for grounding."""
+    import urllib.request, json as _json
+    payload = _json.dumps({
+        "query": query,
+        "search_depth": "basic",       # "advanced" = deeper but uses more credits
+        "max_results": max_results,
+        "include_answer": True,
+    }).encode()
+    req = urllib.request.Request(
+        TAVILY_URL, data=payload, method="POST",
+        headers={"Content-Type": "application/json",
+                 "Authorization": f"Bearer {TAVILY_API_KEY}"},
+    )
+    with urllib.request.urlopen(req, timeout=12) as r:
+        data = _json.loads(r.read().decode())
+    out = []
+    ans = (data.get("answer") or "").strip()
+    if ans:
+        out.append({"title": "Direct answer (Tavily)", "url": "", "snippet": ans})
+    for item in (data.get("results") or [])[:max_results]:
+        title = (item.get("title") or "").strip()
+        if not title:
+            continue
+        out.append({
+            "title":   title[:140],
+            "url":     item.get("url", ""),
+            "snippet": (item.get("content") or "").strip()[:320],
+        })
+    return out
+
+
 def _web_search(query: str, max_results: int = 5) -> list:
     """
-    Multi-source live search — no API keys, no rate limits.
-    Priority order for freshness:
-      1. Google News RSS  — REAL, recent, dated headlines (best for 'latest news')
-      2. HackerNews (Algolia, by date) — recent tech/security stories
-      3. Wikipedia        — background/reference fallback
+    Live search. Tavily first (accurate) when a key is set, then the free
+    Google News / HackerNews / Wikipedia sources as automatic fallback.
     """
     import urllib.request, urllib.parse, json as _json
+
+    # ── Source 0: Tavily (primary, when configured) ──
+    if TAVILY_API_KEY:
+        try:
+            tav = _tavily_search(query, max_results)
+            if tav:
+                logger.info(f"[WebSearch] Tavily → {len(tav)} results for '{query[:50]}'")
+                return tav
+        except Exception as e:
+            logger.warning(f"[WebSearch] Tavily failed ({e}) — falling back to free sources")
+
     results = []
     q_enc = urllib.parse.quote_plus(query)
     hdrs  = {"User-Agent": "Mozilla/5.0 (compatible; VENOM-AI/2.0; +https://venom.ai)"}
@@ -476,6 +534,34 @@ def _get_groq_key() -> str:
     best = min(range(len(keys)), key=lambda i: _groq_key_cooldowns.get(i, 0))
     return keys[best]
 
+def _get_available_groq_key() -> str:
+    """Return a Groq key only if it is currently out of cooldown."""
+    keys = _all_groq_keys()
+    if not keys:
+        return ""
+    now = _time.time()
+    with _groq_key_lock:
+        for offset in range(len(keys)):
+            idx = (_groq_key_index + offset) % len(keys)
+            if now >= _groq_key_cooldowns.get(idx, 0):
+                return keys[idx]
+    return ""
+
+def _seconds_until_next_groq_key() -> int:
+    """How long until any Groq key leaves cooldown."""
+    keys = _all_groq_keys()
+    if not keys:
+        return 0
+    now = _time.time()
+    waits = []
+    with _groq_key_lock:
+        for idx in range(len(keys)):
+            cooldown_until = _groq_key_cooldowns.get(idx, 0)
+            if now >= cooldown_until:
+                return 0
+            waits.append(max(1, int(cooldown_until - now) + 1))
+    return min(waits) if waits else 0
+
 def _mark_groq_key_rate_limited(key: str, retry_after_seconds: int = 60):
     """Put a key in cooldown after a 429 response."""
     keys = _all_groq_keys()
@@ -527,6 +613,24 @@ def _pick_groq_model(message: str) -> str:
 
     return fast_model
 
+def _groq_model_candidates(message: str) -> list[str]:
+    """Preferred model first, then the lighter fast model as a reliability fallback."""
+    chosen = _pick_groq_model(message)
+    fast   = os.getenv("GROQ_MODEL_FAST", "openai/gpt-oss-20b")
+    return [chosen] if chosen == fast else [chosen, fast]
+
+def _is_rate_limited_error(err: Exception | None) -> bool:
+    if not err:
+        return False
+    s = str(err).lower()
+    return (
+        "429" in s or
+        "rate limit" in s or
+        "rate-limited" in s or
+        "too many requests" in s or
+        "cooling down" in s
+    )
+
 
 def _build_messages(history: List[dict], user_message: str,
                     context: Optional[dict] = None, voice: bool = False) -> List[dict]:
@@ -551,9 +655,29 @@ def _build_messages(history: List[dict], user_message: str,
                          "VENOM CONTEXT (what the user is working on right now — use this to give "
                          "specific, relevant help and guide them to the right VENOM feature):\n"
                          + "\n".join(parts)})
-    msgs.extend(history[-20:])
+    msgs.extend(_bounded_history(history, max_messages=20, max_chars=9000))
     msgs.append({"role": "user", "content": user_message})
     return msgs
+
+
+def _bounded_history(history: List[dict], max_messages: int = 20, max_chars: int = 9000) -> List[dict]:
+    """
+    Cap conversation history by BOTH message count and total character budget.
+    A single long AI reply (tables, code, CVE lists — we've seen several KB each)
+    can otherwise make the request grow unbounded across a long session, which
+    triggers Groq's 413 Payload Too Large and then a slow Ollama fallback that
+    hangs for the full timeout on the oversized context. Walk backward from the
+    most recent turns and stop once the char budget is spent.
+    """
+    recent = history[-max_messages:]
+    out, total = [], 0
+    for msg in reversed(recent):
+        content = msg.get("content", "") or ""
+        total += len(content)
+        if total > max_chars and out:
+            break   # keep at least the most recent turn even if it alone is huge
+        out.append(msg)
+    return list(reversed(out))
 
 
 def _is_ollama_running() -> bool:
@@ -581,7 +705,11 @@ def _ensure_model_pulled() -> bool:
 # ── Ollama calls ───────────────────────────────────────────────────────────────
 
 def _call_ollama_stream(messages: List[dict]):
-    """Stream from Ollama /api/chat endpoint."""
+    """Stream from Ollama /api/chat endpoint.
+    Timeout kept short (was 120s) — this only runs as a FALLBACK after Groq has
+    already failed, so a slow/stuck local model must not freeze the whole app
+    (the underlying urllib call is blocking and would otherwise stall FastAPI's
+    event loop for the full timeout — callers should run this via asyncio.to_thread)."""
     import urllib.request
     payload = json.dumps({
         "model": OLLAMA_MODEL,
@@ -599,7 +727,7 @@ def _call_ollama_stream(messages: List[dict]):
         headers={"Content-Type": "application/json"},
         method="POST"
     )
-    return urllib.request.urlopen(req, timeout=120)
+    return urllib.request.urlopen(req, timeout=30)
 
 
 def _call_ollama_sync(messages: List[dict]) -> str:
@@ -617,7 +745,7 @@ def _call_ollama_sync(messages: List[dict]) -> str:
         headers={"Content-Type": "application/json"},
         method="POST"
     )
-    with urllib.request.urlopen(req, timeout=120) as r:
+    with urllib.request.urlopen(req, timeout=30) as r:
         data = json.loads(r.read())
     return data["message"]["content"]
 
@@ -637,10 +765,13 @@ def _call_groq_sync(messages: List[dict], stream: bool = False, model: str = "")
     chosen_model = model or GROQ_MODEL
     last_error   = None
 
-    for attempt in range(len(keys) + 1):   # try each key at most once
-        api_key = _get_groq_key()
-        if not api_key:
+    attempted_keys = set()
+
+    for attempt in range(len(keys)):   # try each currently-available key at most once
+        api_key = _get_available_groq_key()
+        if not api_key or api_key in attempted_keys:
             break
+        attempted_keys.add(api_key)
 
         payload = json.dumps({
             "model":       chosen_model,
@@ -678,7 +809,17 @@ def _call_groq_sync(messages: List[dict], stream: bool = False, model: str = "")
             last_error = e
             raise
 
+    retry_after = _seconds_until_next_groq_key()
+    if retry_after > 0:
+        raise RuntimeError(f"All Groq API keys are cooling down. Retry in about {retry_after}s.")
     raise last_error or RuntimeError("All Groq API keys are rate-limited. Try again shortly.")
+
+
+def _call_groq_text(messages: List[dict], model: str) -> str:
+    """Convenience helper for a standard non-streaming Groq text completion."""
+    with _call_groq_sync(messages, model=model) as r:
+        data = json.loads(r.read().decode())
+    return data.get("choices", [{}])[0].get("message", {}).get("content") or ""
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
@@ -696,6 +837,46 @@ async def _safe_web_search(query: str, timeout: float = 5.0) -> tuple:
         return [], ""
 
 
+def _venom_live_context(user) -> str:
+    """Query the user's REAL scans so the chatbot can answer 'recent scans',
+    'what's running', 'dashboard status' from live data — not just browser state."""
+    if user is None:
+        return ""
+    try:
+        from db.database import SessionLocal
+        from db.models import AttackScan
+        db = SessionLocal()
+        try:
+            scans = (db.query(AttackScan)
+                     .filter(AttackScan.owner_id == user.id)
+                     .order_by(AttackScan.id.desc()).limit(8).all())
+            if not scans:
+                return "VENOM LIVE DATA: The user has NO scans yet. Suggest running one."
+            def _st(s):
+                v = getattr(s.status, "value", s.status)
+                return str(v).lower()
+            running = [s for s in scans if _st(s) in ("running", "queued", "pending", "scanning", "in_progress")]
+            lines = ["VENOM LIVE DATA — the user's ACTUAL scans (use this to answer anything about their "
+                     "recent scans, running scans, findings, or dashboard):"]
+            lines.append(f"Currently running: {len(running)} scan(s)" +
+                         ("" if not running else " — " + ", ".join(f"{s.target_url} ({_st(s)})" for s in running)))
+            lines.append("Recent scans (newest first):")
+            for s in scans:
+                fc = getattr(s, "total_findings", None)
+                sc = getattr(s, "security_score", None)
+                when = s.started_at.strftime("%Y-%m-%d %H:%M") if getattr(s, "started_at", None) else ""
+                lines.append(f"  #{s.id} {s.target_url} — {_st(s)}"
+                             + (f", {fc} findings" if fc is not None else "")
+                             + (f", score {sc}/100" if sc else "")
+                             + (f", {when}" if when else ""))
+            return "\n".join(lines)
+        finally:
+            db.close()
+    except Exception as e:
+        logger.debug(f"[LiveContext] {e}")
+        return ""
+
+
 @router.post("/message")
 async def chat_message(req: ChatRequest,
                        current_user: Optional[_AuthUser] = Depends(get_optional_user)):
@@ -711,8 +892,11 @@ async def chat_message(req: ChatRequest,
     except Exception:
         pass
     kb_ctx = _kb_recall(req.message)
+    live_ctx = _venom_live_context(current_user)
     msgs_base = _build_messages(history, req.message, req.context, voice=getattr(req,'voice',False))
     extra_sys = []
+    if live_ctx:
+        extra_sys.append({"role": "system", "content": live_ctx})
     if kb_ctx:
         extra_sys.append({"role": "system", "content": kb_ctx})
     if search_ctx:
@@ -720,37 +904,48 @@ async def chat_message(req: ChatRequest,
     messages = [msgs_base[0]] + extra_sys + msgs_base[1:]
     reply      = ""
     model_used = ""
+    groq_error = None
 
-    # ── Try Ollama first ──
-    if _is_ollama_running():
+    # ── Groq FIRST (fast, primary) — auto-rotates keys + smart model ──
+    if _get_groq_key():
+        model_candidates = _groq_model_candidates(req.message)
+        for idx, chosen_model in enumerate(model_candidates):
+            try:
+                reply = _call_groq_text(messages, chosen_model)
+                if not reply:
+                    raise RuntimeError("Groq returned an empty response.")
+                model_used = f"groq/{chosen_model}"
+                logger.info(f"[Chat] Groq response: session={session_id} model={chosen_model}")
+                break
+            except Exception as e:
+                groq_error = e
+                if idx < len(model_candidates) - 1:
+                    logger.warning(f"[Chat] Groq model '{chosen_model}' failed: {e} — trying lighter fallback")
+                    continue
+
+    # ── Ollama FALLBACK — only when Groq is unavailable/rate-limited ──
+    # (User's local Ollama keeps the chat working during Groq rate-limits.)
+    if not reply and _is_ollama_running():
         try:
-            reply      = _call_ollama_sync(messages)
+            # Run off the event loop — this is a blocking urllib call and would
+            # otherwise freeze the ENTIRE API (all users, all endpoints) for up
+            # to 30s if Ollama is slow.
+            reply      = await _asyncio.to_thread(_call_ollama_sync, messages)
             model_used = f"ollama/{OLLAMA_MODEL}"
-            logger.info(f"[Chat] Ollama response: session={session_id} chars={len(reply)}")
+            logger.info(f"[Chat] Ollama fallback response: session={session_id} chars={len(reply)}")
         except Exception as e:
-            logger.warning(f"[Chat] Ollama failed: {e} — trying Groq")
+            logger.warning(f"[Chat] Ollama fallback failed: {e}")
 
-    # ── Groq fallback (auto-rotates keys, smart model selection) ──
+    # ── Offline (nothing available) ──
     if not reply:
-        try:
-            chosen_model = _pick_groq_model(req.message)
-            with _call_groq_sync(messages, model=chosen_model) as r:
-                data = json.loads(r.read().decode())
-            reply      = data["choices"][0]["message"]["content"]
-            model_used = f"groq/{chosen_model}"
-            logger.info(f"[Chat] Groq response: session={session_id} model={chosen_model}")
-        except Exception as e:
-            logger.error(f"[Chat] Groq also failed: {e}")
-            err_str = str(e)
-            if "429" in err_str or "rate" in err_str.lower() or "Too Many" in err_str:
-                reply = (
-                    "⚡ **VENOM AI is experiencing high demand right now.**\n\n"
-                    "All AI servers are temporarily busy. Please wait a few seconds and try again — "
-                    "capacity resets automatically."
-                )
-            else:
-                reply = _offline_message()
-            model_used = "offline"
+        if _is_rate_limited_error(groq_error):
+            retry_after = _seconds_until_next_groq_key()
+            wait_hint = f"Please wait about {retry_after} seconds and try again." if retry_after else "Please wait a few seconds and try again."
+            reply = ("⚡ **VENOM AI is experiencing high demand right now.**\n\n"
+                     f"All AI servers are temporarily busy. {wait_hint}")
+        else:
+            reply = _offline_message()
+        model_used = "offline"
 
     history.append({"role": "user",      "content": req.message})
     history.append({"role": "assistant", "content": reply})
@@ -786,9 +981,12 @@ async def chat_stream(req: ChatRequest,
     # Self-learning recall
     kb_ctx = _kb_recall(req.message)
 
-    # Build messages with search + KB context
+    # Build messages with live scan data + search + KB context
+    live_ctx = _venom_live_context(current_user)
     msgs_base = _build_messages(history, req.message, req.context, voice=getattr(req,'voice',False))
     extra_sys = []
+    if live_ctx:
+        extra_sys.append({"role": "system", "content": live_ctx})
     if kb_ctx:
         extra_sys.append({"role": "system", "content": kb_ctx})
     if search_ctx:
@@ -797,14 +995,20 @@ async def chat_stream(req: ChatRequest,
     messages = [msgs_base[0]] + extra_sys + msgs_base[1:]
 
     # ────────────────────────────────────────────────────────────────
-    # PATH A — Ollama streaming
+    # PATH A — Ollama streaming — ONLY when no Groq key is configured.
+    # (When Groq IS configured, Groq is primary and Ollama is used as an
+    #  in-stream fallback inside groq_gen when Groq is rate-limited.)
     # ────────────────────────────────────────────────────────────────
-    if _is_ollama_running():
+    if not _get_groq_key() and _is_ollama_running():
         accumulated = []
 
         async def ollama_gen():
             try:
-                with _call_ollama_stream(messages) as resp:
+                # Open off the event loop — this blocking call is where the real
+                # wait happens (connecting + model warm-up); once the stream is
+                # flowing, per-chunk reads are fast enough not to matter.
+                resp = await _asyncio.to_thread(_call_ollama_stream, messages)
+                with resp:
                     for raw in resp:
                         line = raw.decode("utf-8").strip()
                         if not line:
@@ -849,7 +1053,8 @@ async def chat_stream(req: ChatRequest,
     # ────────────────────────────────────────────────────────────────
     groq_key = _get_groq_key()
     if groq_key:
-        chosen_model = _pick_groq_model(req.message)
+        model_candidates = _groq_model_candidates(req.message)
+        chosen_model = model_candidates[0]
         accumulated  = []
 
         async def groq_gen():
@@ -857,20 +1062,21 @@ async def chat_stream(req: ChatRequest,
             # model fails to connect (bad key already handled by key-rotation; this
             # covers decommissioned models / oversized context / transient 5xx).
             # Retrying at OPEN time preserves real-time token streaming.
-            fast_fallback = os.getenv("GROQ_MODEL_FAST", "openai/gpt-oss-20b")
-            try_models = [chosen_model] if chosen_model == fast_fallback else [chosen_model, fast_fallback]
             resp, last_err = None, None
-            for mdl in try_models:
+            for idx, mdl in enumerate(model_candidates):
                 try:
                     resp = _call_groq_sync(messages, stream=True, model=mdl)
                     last_err = None
                     break
                 except Exception as e:
                     last_err = e
-                    es = str(e).lower()
-                    if "429" in es or "rate" in es or "too many" in es:
-                        break   # rate-limited — don't try the next model, show busy note
-                    logger.warning(f"[Chat] Groq open failed on '{mdl}': {e} — trying fallback")
+                    if idx < len(model_candidates) - 1:
+                        if _is_rate_limited_error(e):
+                            logger.warning(f"[Chat] Groq model '{mdl}' is busy — trying lighter fallback")
+                        else:
+                            logger.warning(f"[Chat] Groq open failed on '{mdl}': {e} — trying fallback")
+                        continue
+                    logger.warning(f"[Chat] Groq stream open failed on '{mdl}': {e}")
 
             if resp is not None:
                 try:
@@ -895,18 +1101,65 @@ async def chat_stream(req: ChatRequest,
                     logger.warning(f"[Chat] Groq mid-stream error: {e}")
 
             if last_err is not None and not accumulated:
-                es = str(last_err).lower()
-                if "429" in es or "rate" in es or "too many" in es:
+                # Streaming can fail even when a normal completion would still work.
+                # Try one last non-stream fallback before surfacing an error bubble.
+                fallback_text = ""
+                for idx, mdl in enumerate(model_candidates):
+                    try:
+                        fallback_text = _call_groq_text(messages, mdl)
+                        if fallback_text:
+                            accumulated.append(fallback_text)
+                            for i in range(0, len(fallback_text), 120):
+                                chunk = json.dumps({"choices": [{"delta": {"content": fallback_text[i:i+120]}}]})
+                                yield f"data: {chunk}\n\n"
+                            last_err = None
+                            break
+                    except Exception as e:
+                        last_err = e
+                        if idx < len(model_candidates) - 1:
+                            logger.warning(f"[Chat] Groq non-stream fallback failed on '{mdl}': {e} — trying fallback")
+
+            # ── Groq exhausted/rate-limited → fall back to LOCAL OLLAMA so the
+            #    user can keep working (streams tokens live, same web context). ──
+            if last_err is not None and not accumulated and _is_ollama_running():
+                try:
+                    oresp = await _asyncio.to_thread(_call_ollama_stream, messages)
+                    with oresp:
+                        for raw in oresp:
+                            line = raw.decode("utf-8").strip()
+                            if not line:
+                                continue
+                            try:
+                                chunk = json.loads(line)
+                                token = chunk.get("message", {}).get("content", "")
+                                if token:
+                                    accumulated.append(token)
+                                    sse = json.dumps({"choices": [{"delta": {"content": token}}]})
+                                    yield f"data: {sse}\n\n"
+                                if chunk.get("done"):
+                                    break
+                            except json.JSONDecodeError:
+                                pass
+                    if accumulated:
+                        last_err = None
+                        logger.info("[Chat] Fell back to local Ollama (Groq was rate-limited)")
+                except Exception as e:
+                    logger.warning(f"[Chat] Ollama stream fallback failed: {e}")
+
+            if last_err is not None and not accumulated:
+                if _is_rate_limited_error(last_err):
+                    retry_after = _seconds_until_next_groq_key()
+                    wait_hint = f"Please wait about {retry_after} seconds and try again." if retry_after else "Please wait a few seconds and try again."
                     friendly = (
                         "⚡ **VENOM AI is experiencing high demand right now.**\n\n"
-                        "All AI servers are temporarily busy. Please wait a few seconds and try again — "
-                        "capacity resets automatically."
+                        f"All AI servers are temporarily busy. {wait_hint}"
                     )
                 else:
                     friendly = (
                         "⚠️ **AI response failed.** Please try sending your message again.\n\n"
                         f"_If the issue persists, try refreshing the page._"
                     )
+                accumulated.append(friendly)
                 err = json.dumps({"choices": [{"delta": {"content": friendly}}]})
                 yield f"data: {err}\n\n"
             yield "data: [DONE]\n\n"
@@ -946,6 +1199,186 @@ async def chat_stream(req: ChatRequest,
         headers={"X-Session-Id": session_id, "X-Model": "offline",
                  "Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
     )
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  AGENT MODE — VENOM executes actions via tool-calling (not just chat)
+#  The LLM chooses tools; the FRONTEND executes them against the real UI and
+#  reports success/failure. VENOM confirms only after real execution.
+# ════════════════════════════════════════════════════════════════════════════
+
+# Tool schema (OpenAI/Groq function-calling format). These are IN-APP actions
+# the frontend executor knows how to run.
+VENOM_TOOLS = [
+    {"type": "function", "function": {
+        "name": "navigate",
+        "description": "Open/switch to a page inside the VENOM app.",
+        "parameters": {"type": "object", "properties": {
+            "page": {"type": "string", "enum": [
+                "dashboard", "scanner", "nhi", "attack-graph", "monitoring",
+                "threat", "reports", "chat", "about", "compliance"]}},
+            "required": ["page"]}}},
+    {"type": "function", "function": {
+        "name": "start_owasp_scan",
+        "description": "Launch an active OWASP Top 10:2025 vulnerability scan against a target URL. Navigates to the scanner and starts it.",
+        "parameters": {"type": "object", "properties": {
+            "url": {"type": "string", "description": "Full target URL, e.g. http://example.com"}},
+            "required": ["url"]}}},
+    {"type": "function", "function": {
+        "name": "start_nhi_scan",
+        "description": "Launch an NHI secret/credential scan (scans a site's JS for leaked secrets) against a target URL.",
+        "parameters": {"type": "object", "properties": {
+            "url": {"type": "string"}}, "required": ["url"]}}},
+    {"type": "function", "function": {
+        "name": "analyze_website",
+        "description": "Autonomously assess a website end-to-end: recon, OWASP scan, analysis, and report. Use when the user says 'analyze', 'assess', or 'pentest' a site.",
+        "parameters": {"type": "object", "properties": {
+            "url": {"type": "string"}}, "required": ["url"]}}},
+    {"type": "function", "function": {
+        "name": "gather_intel",
+        "description": "Run a PASSIVE OSINT recon sweep on a domain to map its attack surface: subdomains, DNS + email posture (SPF/DMARC), WHOIS, tech stack, security headers, TLS, and archived URLs. Use for 'gather intel', 'recon', 'reconnaissance', 'attack surface', 'what can you find about X', 'profile this domain'. No attacks are sent.",
+        "parameters": {"type": "object", "properties": {
+            "domain": {"type": "string", "description": "Domain or URL, e.g. example.com"}},
+            "required": ["domain"]}}},
+    {"type": "function", "function": {
+        "name": "read_scan_results",
+        "description": "Read the findings from the most recent scan (counts, top vulnerabilities, risk).",
+        "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {
+        "name": "generate_report",
+        "description": "Generate/download a PDF report for the latest scan.",
+        "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {
+        "name": "read_current_page",
+        "description": "Report which VENOM page the user is currently viewing.",
+        "parameters": {"type": "object", "properties": {}}}},
+]
+
+VENOM_AGENT_SYSTEM_PROMPT = """You are VENOM Voice — the autonomous AI Security Operations Officer that OPERATES the VENOM platform. You are not a chatbot; you are an operating layer that EXECUTES the user's requests using tools.
+
+CORE RULE — EXECUTE, DON'T DESCRIBE:
+If the user asks for an action VENOM can perform, you MUST call the matching tool. Never say you did something unless a tool performs it. Never fabricate navigation, scans, or results.
+
+TOOLS YOU CONTROL:
+- navigate(page): open a VENOM page (dashboard, scanner, nhi, attack-graph, monitoring, threat, reports, chat, about, compliance)
+- start_owasp_scan(url): launch an active OWASP Top 10:2025 scan
+- start_nhi_scan(url): launch a secret/credential scan
+- analyze_website(url): autonomous full assessment (recon -> scan -> analyze -> report)
+- gather_intel(domain): PASSIVE OSINT sweep — subdomains, DNS/email posture, WHOIS, tech, headers, TLS, archived URLs
+- read_scan_results(): read the latest findings
+- generate_report(): produce the PDF report
+- read_current_page(): report the current page
+
+HOW TO DECIDE:
+- "open/go to/show <page>" -> navigate
+- "scan/test <url>" -> start_owasp_scan (or start_nhi_scan for secrets)
+- "analyze/assess/pentest <site>" -> analyze_website
+- "gather intel / recon / attack surface / what can you find about <domain>" -> gather_intel
+- "what did you find / results / findings" -> read_scan_results
+- "make/generate/download report" -> generate_report
+- A pure knowledge question (e.g. "what is SQL injection") -> DON'T call a tool; just answer briefly.
+- If a scan/analyze request has no URL, ask for the target in one short sentence (no tool call).
+
+STYLE (spoken aloud): warm, friendly, and natural — like a helpful human teammate, not a robot reading text. Conversational and BRIEF: usually one short sentence, sometimes just a few words. It's fine to be casual ("Sure, opening that now", "Got it", "On it", "Nice — that's done"). Occasionally acknowledge the user naturally. No emojis, no markdown, no symbols, no lists. Never guess — if unsure, say so briefly and casually.
+
+You may call MULTIPLE tools if the request needs it (e.g. navigate then scan). The app executes them and reports success; keep any text you return short."""
+
+
+def _call_groq_agent(messages, model):
+    """Non-streaming Groq call WITH tools. Returns (content, tool_calls, model)."""
+    import urllib.request, urllib.error
+    keys = _all_groq_keys()
+    if not keys:
+        raise ValueError("No Groq API key configured.")
+    last_error = None
+    for _ in range(len(keys) + 1):
+        api_key = _get_groq_key()
+        if not api_key:
+            break
+        payload = json.dumps({
+            "model": model, "messages": messages,
+            "tools": VENOM_TOOLS, "tool_choice": "auto",
+            "max_tokens": 1024, "temperature": 0.3,
+        }).encode()
+        req = urllib.request.Request(GROQ_URL, data=payload, method="POST", headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+            "User-Agent": "Mozilla/5.0 (compatible; VENOM-AI/2.0)"})
+        try:
+            with urllib.request.urlopen(req, timeout=45) as r:
+                data = json.loads(r.read().decode())
+            msg = data.get("choices", [{}])[0].get("message", {})
+            return msg.get("content") or "", msg.get("tool_calls") or [], model
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                _mark_groq_key_rate_limited(api_key, 60); last_error = e; continue
+            last_error = e; break
+        except Exception as e:
+            last_error = e; break
+    raise last_error or RuntimeError("Groq agent call failed")
+
+
+class AgentRequest(BaseModel):
+    session_id: Optional[str] = None
+    message: str
+    context: Optional[dict] = None
+    voice: bool = True
+
+
+@router.post("/agent")
+async def chat_agent(req: AgentRequest,
+                     current_user: Optional[_AuthUser] = Depends(get_optional_user)):
+    """
+    Agent turn: the LLM decides which VENOM tools to call. Returns:
+      { speak: str, actions: [{tool, args}], session_id }
+    The FRONTEND executes the actions and confirms to the user.
+    """
+    session_id = _scoped_session_id(req.session_id, current_user)
+    history    = _load_session(session_id)
+
+    # Build messages with the agent prompt + live context
+    ctx_msgs = _build_messages(history, req.message, req.context, voice=req.voice)
+    # Swap the system prompt for the agent (execute-first) prompt
+    ctx_msgs[0] = {"role": "system", "content": VENOM_AGENT_SYSTEM_PROMPT}
+
+    groq_key = _get_groq_key()
+    if not groq_key:
+        return {"speak": "AI engine is offline. Add a Groq API key to enable the agent.",
+                "actions": [], "session_id": session_id}
+
+    model = os.getenv("GROQ_MODEL_FAST", "openai/gpt-oss-20b")
+    try:
+        content, tool_calls, used = _call_groq_agent(ctx_msgs, model)
+    except Exception as e:
+        es = str(e).lower()
+        logger.error(f"[Agent] Groq call failed: {e}")
+        if "429" in es or "rate" in es or "too many" in es:
+            msg = "Hang on, the AI servers are busy for a moment — try again in a few seconds."
+        else:
+            msg = "Sorry, I couldn't reach the AI just now — give it another try."
+        return {"speak": msg, "actions": [], "session_id": session_id}
+
+    actions = []
+    for tc in tool_calls:
+        fn = (tc.get("function") or {})
+        name = fn.get("name")
+        try:
+            args = json.loads(fn.get("arguments") or "{}")
+        except Exception:
+            args = {}
+        if name:
+            actions.append({"tool": name, "args": args})
+
+    # Persist the turn (store a compact record)
+    history.append({"role": "user", "content": req.message})
+    summary = content or ("[actions: " + ", ".join(a["tool"] for a in actions) + "]" if actions else "")
+    history.append({"role": "assistant", "content": summary})
+    trimmed = history[-40:]
+    _sessions[session_id] = trimmed
+    _save_session(session_id, trimmed)
+
+    return {"speak": content or "", "actions": actions,
+            "session_id": session_id, "model": f"groq/{used}"}
 
 
 @router.get("/status")
@@ -1282,12 +1715,21 @@ async def analyze_media(req: MediaAnalysisRequest,
 # ── Offline message ────────────────────────────────────────────────────────────
 
 def _offline_message() -> str:
+    # If keys ARE configured, this is a transient rate-limit — say so honestly
+    # instead of the misleading "not configured".
+    if _all_groq_keys():
+        return (
+            "⚡ **Give me a few seconds — the AI is busy right now.**\n\n"
+            "The free AI servers are at capacity for a moment. Please try again shortly. "
+            "If this keeps happening, your free quota is maxed out — add more API keys "
+            "(from separate accounts) or run a local model for unlimited use."
+        )
     return (
         "**VENOM AI — AI Engine Not Configured**\n\n"
-        "No AI backend is running. Start Ollama or configure an AI API key:\n\n"
+        "No AI backend is set up yet. Add one:\n\n"
         "```\n"
-        "1. Install Ollama (free, local): https://ollama.ai\n"
-        "2. Run: ollama pull llama3\n"
-        "3. Restart: docker-compose restart api\n"
+        "1. Free Groq key: https://console.groq.com/keys  → paste into backend/.env\n"
+        "2. Or local (unlimited): install Ollama (https://ollama.ai), run 'ollama pull llama3'\n"
+        "3. Restart: docker compose up -d --force-recreate api\n"
         "```"
     )

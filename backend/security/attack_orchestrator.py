@@ -207,17 +207,41 @@ def _save_findings(db: Session, scan_id: int, findings: List) -> dict:
 
 def _dedupe_findings(findings: List[Finding]) -> List[Finding]:
     """
-    Remove duplicate findings (same OWASP + URL + parameter + title).
-    Keeps the first occurrence which is usually the most concrete.
+    Collapse duplicate findings of the SAME vulnerability type + title into ONE
+    representative finding, regardless of how many URLs/params it appeared on.
+    (Previously keyed on URL too, so the same SSTI across 32 forms produced 32
+    rows — that noise is what made results look uniform.) We keep the first (most
+    concrete) occurrence and note how many locations it was detected on.
     """
-    seen = set()
-    out = []
+    groups: dict = {}
+    order: list = []
     for f in findings:
-        key = (f.owasp, f.affected_url, f.parameter, f.title)
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(f)
+        key = (f.owasp, (f.title or "").strip().lower())
+        if key not in groups:
+            groups[key] = [f]
+            order.append(key)
+        else:
+            groups[key].append(f)
+
+    out: List[Finding] = []
+    for key in order:
+        grp = groups[key]
+        rep = grp[0]
+        if len(grp) > 1:
+            # Aggregate the distinct affected locations into the representative
+            locs = []
+            for g in grp:
+                u = getattr(g, "affected_url", None)
+                if u and u not in locs:
+                    locs.append(u)
+            try:
+                note = f"\n\nDetected on {len(grp)} location(s)"
+                if locs[:5]:
+                    note += ": " + ", ".join(locs[:5]) + ("…" if len(locs) > 5 else "")
+                rep.description = (rep.description or "") + note + "."
+            except Exception:
+                pass
+        out.append(rep)
     return out
 
 

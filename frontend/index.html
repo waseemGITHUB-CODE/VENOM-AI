@@ -614,6 +614,7 @@ select.inp option:hover{
   font-size:13.5px;line-height:1.7;
   animation:msg-in 0.3s ease-out forwards;
 }
+.chat-bubble.user:hover .chat-edit-btn{opacity:1}
 .chat-bubble.user{
   align-self:flex-end;
   background:rgba(57,255,20,0.08);
@@ -1358,6 +1359,8 @@ border:1px solid rgba(57,255,20,.15);display:flex;align-items:center;justify-con
   <div class="topbar">
     <span class="topbar-title">Vulnerability Scanner</span>
     <div class="topbar-spacer"></div>
+    <button class="btn btn-ghost btn-sm" onclick="clearScanHistory()" title="Delete all your saved OWASP scans"
+      style="color:var(--muted);margin-right:8px" onmouseover="this.style.color='var(--red)'" onmouseout="this.style.color='var(--muted)'">🗑 Clear History</button>
     <span class="topbar-badge" id="scanner-mode">FULL SCAN</span>
   </div>
   <div class="page-body">
@@ -1429,7 +1432,7 @@ border:1px solid rgba(57,255,20,.15);display:flex;align-items:center;justify-con
           <div class="pipeline-stage pending" id="ps-nmap"><span class="stage-dot"></span>Nmap Infrastructure</div>
           <div class="pipeline-stage pending" id="ps-crawl"><span class="stage-dot"></span>Web Crawler</div>
           <div class="pipeline-stage pending" id="ps-headers"><span class="stage-dot"></span>Headers &amp; SSL</div>
-          <div class="pipeline-stage pending" id="ps-owasp"><span class="stage-dot"></span>OWASP Top 10</div>
+          <div class="pipeline-stage pending" id="ps-zap"><span class="stage-dot"></span>OWASP ZAP Deep Scan</div>
           <div class="pipeline-stage pending" id="ps-nhi"><span class="stage-dot"></span>NHI Secret Scan</div>
           <div class="pipeline-stage pending" id="ps-nuclei"><span class="stage-dot"></span>Nuclei Templates</div>
           <div class="pipeline-stage pending" id="ps-ai"><span class="stage-dot"></span>AI Analysis</div>
@@ -1509,7 +1512,7 @@ border:1px solid rgba(57,255,20,.15);display:flex;align-items:center;justify-con
     <span class="topbar-title">Attack Chain Graph</span>
     <span class="topbar-sub">— Live Attack Path Analysis · MITRE ATT&amp;CK</span>
     <div class="topbar-spacer"></div>
-    <select id="ag-scan-select" onchange="buildAttackGraph()"
+    <select id="ag-scan-select" onchange="_agLoadGraph()"
             style="font-family:var(--mono);font-size:10px;background:var(--card);color:var(--text);
                    border:1px solid var(--border);border-radius:5px;padding:5px 10px;cursor:pointer;
                    max-width:300px;outline:none">
@@ -1555,6 +1558,8 @@ border:1px solid rgba(57,255,20,.15);display:flex;align-items:center;justify-con
         <div style="font-family:var(--head);font-size:16px">No Attack Chains</div>
         <div style="font-size:12px;text-align:center;max-width:300px">Select a completed scan above to visualize live attack paths</div>
       </div>
+      <!-- Animated attack-map (Attacker → Exploits → Crown Jewels) -->
+      <div id="ag-map"></div>
       <!-- Chain SVGs rendered here -->
       <div id="ag-graph"></div>
     </div>
@@ -2073,10 +2078,6 @@ LLaMA 3 / Mixtral<br>Custom KB (RAG)<br>Context-aware chat<br>Local AI Engine
       <span class="topbar-sub">— Cybersecurity AI Specialist</span>
     </div>
     <div class="topbar-spacer"></div>
-    <button id="venom-voice-btn" class="btn btn-ghost btn-sm" onclick="toggleVenomVoice()" title="VENOM voice OFF — click to enable" style="color:var(--muted);display:inline-flex;align-items:center;gap:6px">
-      <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 2a2 2 0 0 1 2 2v4a2 2 0 1 1-4 0V4a2 2 0 0 1 2-2z" stroke="currentColor" stroke-width="1.3"/><path d="M4 8a4 4 0 0 0 8 0M8 12v2M6 14h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
-      <span id="venom-voice-label">Voice</span>
-    </button>
     <button class="btn btn-ghost btn-sm" onclick="newChatSession()">+ New Chat</button>
     <button class="btn btn-ghost btn-sm" onclick="clearChat()">Clear</button>
   </div>
@@ -2090,7 +2091,7 @@ LLaMA 3 / Mixtral<br>Custom KB (RAG)<br>Context-aware chat<br>Local AI Engine
   </div>
 
   <!-- Main Chat Area -->
-  <div style="flex:1;display:flex;flex-direction:column;overflow:hidden">
+  <div style="flex:1;display:flex;flex-direction:column;overflow:hidden;position:relative">
   <div class="chat-suggestions" id="chat-suggestions">
     <button class="chat-chip" onclick="sendChip(this)">Explain SQL Injection in depth</button>
     <button class="chat-chip" onclick="sendChip(this)">How to exploit Path Traversal / LFI?</button>
@@ -2105,19 +2106,12 @@ LLaMA 3 / Mixtral<br>Custom KB (RAG)<br>Context-aware chat<br>Local AI Engine
       VENOM AI online. I'm your dedicated cybersecurity specialist — ask me about vulnerabilities, exploits, CVEs, pen testing, malware analysis, network security, CTF challenges, and more. What are we hunting today?
     </div>
   </div>
+  <!-- Scroll-to-bottom button (shown when scrolled up) -->
+  <button id="chat-scroll-btn" onclick="chatScrollBottom()" title="Scroll to latest"
+    style="display:none;position:absolute;bottom:96px;left:50%;transform:translateX(-50%);z-index:20;width:38px;height:38px;border-radius:50%;background:var(--card2);border:1px solid rgba(57,255,20,.4);color:var(--acid);cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.5);align-items:center;justify-content:center">
+    <svg width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M8 3v9M4 8.5l4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
   <div class="chat-input-bar" style="flex-direction:column;padding:10px 16px 14px;gap:0">
-    <!-- Hands-free voice: animated VENOM avatar that "talks" while speaking -->
-    <div id="venom-listen-bar" style="display:none;align-items:center;gap:14px;padding:11px 16px;margin-bottom:10px;background:linear-gradient(90deg,rgba(57,255,20,.08),rgba(57,255,20,.02));border:1px solid rgba(57,255,20,.28);border-radius:14px">
-      <!-- VENOM premium 3D animated core (canvas-rendered) -->
-      <div id="venom-avatar" style="position:relative;width:66px;height:66px;flex-shrink:0">
-        <canvas id="venom-core" width="198" height="198"
-                style="width:66px;height:66px;display:block"></canvas>
-      </div>
-      <span id="venom-listen-orb" class="venom-orb" style="display:none"></span>
-      <span id="venom-listen-text" style="flex:1;font-size:13.5px;color:var(--text)">Listening…</span>
-      <button onclick="stopVenomConversation()" title="End voice conversation"
-        style="background:rgba(220,20,60,.14);border:1px solid rgba(220,20,60,.4);color:var(--red);border-radius:8px;padding:6px 12px;cursor:pointer;font-size:11px;font-family:var(--mono);white-space:nowrap">■ End</button>
-    </div>
     <div id="chat-media-preview" style="display:none;padding:4px 0 8px;border-bottom:1px solid rgba(57,255,20,.1);margin-bottom:8px">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap" id="media-preview-items"></div>
     </div>
@@ -2142,11 +2136,6 @@ LLaMA 3 / Mixtral<br>Custom KB (RAG)<br>Context-aware chat<br>Local AI Engine
         placeholder="Ask about vulnerabilities, exploits, CVEs, pen testing… or press + to attach a file"
         rows="1"
         style="flex:1;min-height:40px;max-height:180px;resize:none;font-size:14px;padding:10px 14px;line-height:1.6;border-radius:10px"></textarea>
-      <!-- Mic: hands-free voice conversation -->
-      <button id="venom-mic-btn" onclick="toggleVenomVoice()" title="Start hands-free voice conversation"
-        style="width:40px;height:40px;background:var(--card2);border:1px solid var(--border);border-radius:10px;cursor:pointer;color:var(--muted);display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .15s">
-        <svg width="17" height="17" viewBox="0 0 16 16" fill="none"><path d="M8 2a2 2 0 0 1 2 2v4a2 2 0 1 1-4 0V4a2 2 0 0 1 2-2z" stroke="currentColor" stroke-width="1.3"/><path d="M4 8a4 4 0 0 0 8 0M8 12v2M6 14h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
-      </button>
       <!-- Right side buttons -->
       <div style="display:flex;flex-direction:column;gap:6px;align-items:center">
         <button id="chat-stop-btn" onclick="/* handled in sendChat */"
@@ -3441,7 +3430,8 @@ async function startScan() {
   document.getElementById('scan-history-wrap').style.display = 'none';
   document.getElementById('scan-progress-wrap').style.display = 'block';
   document.getElementById('scan-progress-url').textContent = url;
-  document.getElementById('scan-bar').style.width = '0%';
+  const _sb = document.getElementById('scan-bar'); _sb.style.width = '0%'; _sb.style.background = '';
+  const _ss = document.getElementById('scan-step'); if (_ss) _ss.style.color = '';
   document.getElementById('scan-log-lines').innerHTML = '';
   updateScanTypeUI(type);
   addScanLog('Initializing VENOM scan engine...');
@@ -3499,38 +3489,37 @@ function addScanLog(msg) {
 const SCAN_TYPE_CONFIG = {
   full: {
     label: 'FULL SCAN',
-    modules: ['✓ Headers','✓ SSL/TLS','✓ SQL Injection','✓ XSS','✓ Proof-of-Exploit','✓ NHI Key Leak','✓ Nuclei Templates','✓ AI Auto-Fix'],
+    modules: ['✓ Headers','✓ SSL/TLS','✓ NHI Key Leak','✓ OWASP ZAP Deep Scan','✓ Nuclei Templates','✓ AI Auto-Fix'],
     pipeline: [
-      ['ps-dns',     0,  8,  '🔍 DNS resolution — locating target host...'],
-      ['ps-nmap',    8,  22, '🛰️ Nmap infrastructure scan — mapping open ports & services...'],
-      ['ps-crawl',   22, 34, '🌐 Web crawler — discovering endpoints and parameters...'],
-      ['ps-headers', 34, 48, '🔐 Checking SSL/TLS, HTTP headers, cookies...'],
-      ['ps-owasp',   48, 64, '💉 OWASP Top 10 — SQLi, XSS, SSRF, IDOR probes...'],
-      ['ps-nhi',     64, 76, '🔑 NHI scanner — hunting API keys, tokens, secrets...'],
-      ['ps-nuclei',  76, 88, '⚡ Nuclei templates — running vulnerability signatures...'],
-      ['ps-ai',      88, 99, '🤖 AI analysis — enriching findings & generating fixes...'],
+      ['ps-dns',     0,  6,  '🔍 DNS resolution — locating target host...'],
+      ['ps-nmap',    6,  20, '🛰️ Nmap infrastructure scan — mapping open ports & services...'],
+      ['ps-crawl',   20, 32, '🌐 Web crawler — discovering endpoints and parameters...'],
+      ['ps-headers', 32, 46, '🔐 Checking SSL/TLS, HTTP headers, cookies...'],
+      ['ps-zap',     46, 74, '🕷️ OWASP ZAP — deep spider + active scan (DAST)...'],
+      ['ps-nhi',     74, 82, '🔑 NHI scanner — hunting API keys, tokens, secrets...'],
+      ['ps-nuclei',  82, 90, '⚡ Nuclei templates — running vulnerability signatures...'],
+      ['ps-ai',      90, 99, '🤖 AI analysis — enriching findings & generating fixes...'],
     ]
   },
   quick: {
     label: 'QUICK SCAN',
-    modules: ['✓ Headers','✓ SSL/TLS','✓ Basic Vulns','✓ AI Summary'],
+    modules: ['✓ Headers','✓ SSL/TLS','✓ Cookies','✓ AI Summary'],
     pipeline: [
-      ['ps-dns',     0,  20, '🔍 DNS resolution — locating target host...'],
-      ['ps-headers', 20, 60, '🔐 Checking SSL/TLS, HTTP headers, cookies...'],
-      ['ps-owasp',   60, 85, '💉 Quick vulnerability probes...'],
-      ['ps-ai',      85, 99, '🤖 AI analysis — generating quick summary...'],
+      ['ps-dns',     0,  25, '🔍 DNS resolution — locating target host...'],
+      ['ps-headers', 25, 75, '🔐 Checking SSL/TLS, HTTP headers, cookies...'],
+      ['ps-ai',      75, 99, '🤖 AI analysis — generating quick summary...'],
     ]
   },
   webapp: {
     label: 'WEB APP SCAN',
-    modules: ['✓ Headers','✓ SSL/TLS','✓ SQL Injection','✓ XSS','✓ SSRF','✓ IDOR','✓ AI Auto-Fix'],
+    modules: ['✓ Headers','✓ SSL/TLS','✓ Web Crawler','✓ OWASP ZAP Deep Scan','✓ Nuclei Templates','✓ AI Auto-Fix'],
     pipeline: [
       ['ps-dns',     0,  10, '🔍 DNS resolution — locating target host...'],
-      ['ps-crawl',   10, 28, '🌐 Web crawler — discovering endpoints and parameters...'],
-      ['ps-headers', 28, 44, '🔐 Checking SSL/TLS, HTTP headers, cookies...'],
-      ['ps-owasp',   44, 72, '💉 OWASP Top 10 — SQLi, XSS, SSRF, IDOR probes...'],
-      ['ps-nuclei',  72, 88, '⚡ Nuclei templates — web app vulnerability signatures...'],
-      ['ps-ai',      88, 99, '🤖 AI analysis — enriching findings & generating fixes...'],
+      ['ps-crawl',   10, 26, '🌐 Web crawler — discovering endpoints and parameters...'],
+      ['ps-headers', 26, 42, '🔐 Checking SSL/TLS, HTTP headers, cookies...'],
+      ['ps-zap',     42, 74, '🕷️ OWASP ZAP — deep spider + active scan (DAST)...'],
+      ['ps-nuclei',  74, 90, '⚡ Nuclei templates — web app vulnerability signatures...'],
+      ['ps-ai',      90, 99, '🤖 AI analysis — enriching findings & generating fixes...'],
     ]
   },
   infra: {
@@ -3595,7 +3584,7 @@ function updateScanTypeUI(type) {
     modsEl.innerHTML = `<span style="font-family:var(--mono);font-size:9px;color:var(--muted)">MODULES:</span>` +
       cfg.modules.map(m => `<span style="font-family:var(--mono);font-size:9px;color:var(--acid2)">${m}</span>`).join('');
   }
-  const allStages = ['ps-dns','ps-nmap','ps-crawl','ps-headers','ps-owasp','ps-nhi','ps-nuclei','ps-ai'];
+  const allStages = ['ps-dns','ps-nmap','ps-crawl','ps-headers','ps-zap','ps-nhi','ps-nuclei','ps-ai'];
   const activeStageIds = cfg.pipeline.map(s => s[0]);
   allStages.forEach(id => {
     const el = document.getElementById(id);
@@ -3851,7 +3840,8 @@ async function startOwasp2025Scan(url) {
   document.getElementById('scan-history-wrap').style.display = 'none';
   document.getElementById('scan-progress-wrap').style.display = 'block';
   document.getElementById('scan-progress-url').textContent = url;
-  document.getElementById('scan-bar').style.width = '0%';
+  const _sb = document.getElementById('scan-bar'); _sb.style.width = '0%'; _sb.style.background = '';
+  const _ss = document.getElementById('scan-step'); if (_ss) _ss.style.color = '';
   document.getElementById('scan-log-lines').innerHTML = '';
   // Reset all OWASP 2025 stages to pending
   ['ps2025-recon','ps2025-plan','ps2025-a01','ps2025-a02','ps2025-a03','ps2025-a04',
@@ -4003,7 +3993,16 @@ function pollOwasp2025Scan(scanId) {
             onDownload: () => downloadActiveReport(scanId),
           });
         } else if (s.status === 'failed') {
-          addScanLog('❌ Scan failed: ' + (s.error || 'unknown error'));
+          // Make failure obvious — red bar, clear step text (was staying green at 100%)
+          const bar = document.getElementById('scan-bar');
+          if (bar) { bar.style.width = '100%'; bar.style.background = '#e53935'; }
+          const step = document.getElementById('scan-step');
+          const err = s.error || 'unknown error';
+          const offline = /unreachable|could not connect|offline|not exist|timed out/i.test(err);
+          if (step) { step.textContent = offline ? 'Target offline / unreachable' : 'Scan failed'; step.style.color = '#ff5470'; }
+          addScanLog('❌ ' + (offline
+            ? 'Target is offline or blocking requests — the scanner is fine, the site is not reachable. Try a target that is up (e.g. http://zero.webappsecurity.com).'
+            : 'Scan failed: ' + err));
         } else {
           addScanLog('⏹ Scan cancelled');
         }
@@ -4131,6 +4130,7 @@ function renderAttackChains(data) {
 function renderOwasp2025Results(data) {
   if (!data) return;
   window._o2025_lastResults = data;   // cache for the confidence filter toggle
+  window._o2025_scanId = data.scan && data.scan.id;   // for false-positive + diff
   const s = data.scan;
   const vulns = data.vulnerabilities || [];
   const hardening = data.hardening || [];
@@ -4188,6 +4188,11 @@ function renderOwasp2025Results(data) {
           <div style="font-size:11px; color:var(--text); margin-top:2px; font-family:var(--mono);">${esc(f.evidence)}</div>` : ''}
         ${f.recommendation ? `<div style="font-size:10px; color:var(--acid); text-transform:uppercase; margin-top:8px;">How to Fix</div>
           <div style="font-size:12px; color:var(--text); line-height:1.6; margin-top:2px;">${esc(f.recommendation)}</div>` : ''}
+        <div style="margin-top:10px; display:flex; justify-content:flex-end;">
+          <button onclick="markFalsePositive(${f.id||0}, this)" title="Hide this as a false positive (won't reappear on re-scan)"
+            style="font-size:10px; background:none; border:1px solid var(--border); color:var(--muted); border-radius:5px; padding:4px 10px; cursor:pointer;"
+            onmouseover="this.style.color='#ff5470';this.style.borderColor='rgba(255,23,68,.4)'" onmouseout="this.style.color='var(--muted)';this.style.borderColor='var(--border)'">✕ False positive</button>
+        </div>
       </div>
     `;
   }
@@ -4197,27 +4202,125 @@ function renderOwasp2025Results(data) {
   const probableCount  = byConf.probable  || vulns.filter(v=>v.confidence==='probable').length;
   const suspectedCount = byConf.suspected || vulns.filter(v=>v.confidence==='suspected').length;
   const showAll = !window._o2025_exploitableOnly;
-  const shownVulns = showAll ? vulns : vulns.filter(v => v.confidence === 'confirmed');
+
+  // ── Group findings into clear sections by confidence tier ──
+  const confirmed = vulns.filter(v => v.confidence === 'confirmed');
+  const probable  = vulns.filter(v => v.confidence === 'probable');
+  const suspected = vulns.filter(v => !['confirmed','probable'].includes(v.confidence)); // suspected / unknown
+
+  // Render one collapsible-style section with a coloured header + count
+  function section(emoji, title, subtitle, color, items, emptyMsg) {
+    if (!items.length && emptyMsg === null) return '';
+    const head = `<div style="display:flex;align-items:baseline;gap:8px;margin:22px 0 10px;padding-bottom:7px;border-bottom:1px solid var(--border)">
+        <span style="font-size:13px;font-weight:800;color:${color};text-transform:uppercase;letter-spacing:.07em">${emoji} ${title}</span>
+        <span style="font-size:12px;font-weight:800;color:${color};background:${color}22;border:1px solid ${color}55;border-radius:20px;padding:1px 9px">${items.length}</span>
+        <span style="font-size:11px;color:var(--muted);margin-left:2px">${subtitle}</span>
+      </div>`;
+    const body = items.length ? items.map(cardHtml).join('')
+      : `<div style="padding:16px;text-align:center;color:var(--muted);border:1px dashed var(--border);border-radius:6px">${emptyMsg}</div>`;
+    return head + body;
+  }
 
   let html = '';
-  html += `<div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:14px 0 12px;">
+  // Summary chips + filter
+  html += `<div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:14px 0 4px;">
     <div style="display:flex; gap:6px;">
-      <span style="font-size:10px; padding:3px 9px; border-radius:4px; font-weight:800; background:rgba(255,23,68,.16); color:#ff5470; border:1px solid rgba(255,23,68,.4);">${confirmedCount} CONFIRMED</span>
-      <span style="font-size:10px; padding:3px 9px; border-radius:4px; font-weight:700; background:rgba(251,140,0,.14); color:#fb8c00;">${probableCount} PROBABLE</span>
+      <span style="font-size:10px; padding:3px 9px; border-radius:4px; font-weight:800; background:rgba(255,23,68,.16); color:#ff5470; border:1px solid rgba(255,23,68,.4);">${confirmedCount} TRUE POSITIVE</span>
+      <span style="font-size:10px; padding:3px 9px; border-radius:4px; font-weight:700; background:rgba(251,140,0,.14); color:#fb8c00;">${probableCount} LIKELY</span>
       <span style="font-size:10px; padding:3px 9px; border-radius:4px; font-weight:700; background:rgba(249,168,37,.12); color:#f9a825;">${suspectedCount} VERIFY</span>
+      <span style="font-size:10px; padding:3px 9px; border-radius:4px; font-weight:700; background:rgba(107,122,153,.15); color:#8899bb;">${hardening.length} HARDENING</span>
     </div>
     <label style="margin-left:auto; display:flex; align-items:center; gap:7px; font-size:11px; color:var(--text); cursor:pointer; user-select:none;">
       <input type="checkbox" ${window._o2025_exploitableOnly?'checked':''} onchange="window._o2025_exploitableOnly=this.checked; renderOwasp2025Results(window._o2025_lastResults);" style="accent-color:#ff5470; width:14px; height:14px;">
-      Show exploitable (confirmed) only
+      Show true positives only
     </label>
   </div>`;
-  html += `<div style="font-size:12px; font-weight:800; color:#ff1744; text-transform:uppercase; letter-spacing:.08em; margin:6px 0 10px; padding-bottom:6px; border-bottom:1px solid var(--border);">🔴 Vulnerabilities (${shownVulns.length}${showAll?'':' of '+vulns.length}) — prioritised, true positives first</div>`;
-  html += shownVulns.length ? shownVulns.map(cardHtml).join('')
-    : `<div style="padding:18px; text-align:center; color:var(--muted); border:1px dashed var(--border); border-radius:6px;">${showAll?'No exploitable vulnerabilities found 🎉':'No CONFIRMED vulnerabilities. Uncheck the filter to see probable/verify findings.'}</div>`;
-  html += `<div style="font-size:12px; font-weight:800; color:var(--acid); text-transform:uppercase; letter-spacing:.08em; margin:20px 0 10px; padding-bottom:6px; border-bottom:1px solid var(--border);">🟢 Hardening Recommendations (${hardening.length}) — best-practice improvements</div>`;
-  html += hardening.length ? hardening.map(cardHtml).join('')
-    : `<div style="padding:18px; text-align:center; color:var(--muted); border:1px dashed var(--border); border-radius:6px;">No hardening recommendations.</div>`;
+
+  // Compare-to-previous button + diff container
+  html += `<div style="margin:2px 0 10px; display:flex; gap:8px; flex-wrap:wrap;">
+      <button onclick="showScanDiff()" title="Compare to the previous scan of this target"
+        style="font-size:11px; background:rgba(57,255,20,.08); border:1px solid rgba(57,255,20,.25); color:var(--acid); border-radius:6px; padding:5px 12px; cursor:pointer;">⇄ Compare to previous scan</button>
+      <button onclick="viewAttackGraph(window._o2025_scanId)" title="Visualise this scan's attack paths"
+        style="font-size:11px; background:rgba(139,0,255,.1); border:1px solid rgba(139,0,255,.3); color:#c084fc; border-radius:6px; padding:5px 12px; cursor:pointer;">🧬 View Attack Graph</button>
+    </div>
+    <div id="o2025-diff"></div>`;
+
+  // Section 1 — TRUE POSITIVES (confirmed / exploitable) — always shown
+  html += section('🔴', 'True Positives', 'proven exploitable — fix these first', '#ff1744',
+                  confirmed, 'No confirmed exploitable vulnerabilities. 🎉');
+
+  if (showAll) {
+    // Section 2 — LIKELY (probable)
+    html += section('🟠', 'Likely Issues', 'strong signals — probably real, worth confirming', '#fb8c00',
+                    probable, null);
+    // Section 3 — NEEDS VERIFICATION (suspected / possible false positives)
+    html += section('🔍', 'Needs Verification', 'weak signals — may be false positives, verify manually', '#f9a825',
+                    suspected, null);
+    // Section 4 — HARDENING & SECURITY HEADERS
+    html += section('🛡️', 'Hardening & Security Headers', 'best-practice improvements, not directly exploitable', '#6b7a99',
+                    hardening, 'No hardening recommendations.');
+  } else {
+    html += `<div style="margin-top:16px;font-size:11px;color:var(--muted);font-style:italic">Filter on — hiding ${probable.length} likely, ${suspected.length} to verify, and ${hardening.length} hardening items. Uncheck to see all.</div>`;
+  }
+
   document.getElementById('vulns-list').innerHTML = html;
+}
+
+// Mark a finding as a false positive → hide it (persisted; won't reappear on re-scan)
+async function markFalsePositive(id, btn) {
+  if (!id) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'Dismissing…'; }
+  try {
+    const r = await VenomAuth.authFetch(`/api/attack/finding/${id}/false-positive`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ value: true })
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = window._o2025_lastResults;
+    if (d) {
+      if (d.vulnerabilities) d.vulnerabilities = d.vulnerabilities.filter(v => v.id !== id);
+      if (d.hardening)       d.hardening       = d.hardening.filter(v => v.id !== id);
+      renderOwasp2025Results(d);
+    }
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = '✕ False positive'; }
+    alert('Could not dismiss: ' + e.message);
+  }
+}
+
+// Compare the current scan to the previous scan of the same target
+async function showScanDiff() {
+  const box = document.getElementById('o2025-diff');
+  const sid = window._o2025_scanId;
+  if (!box || !sid) return;
+  box.innerHTML = `<div style="padding:10px;color:var(--muted);font-size:12px">Comparing to previous scan…</div>`;
+  try {
+    const r = await VenomAuth.authFetch(`/api/attack/${sid}/diff`);
+    const d = await r.json();
+    if (!r.ok || d.ok === false) throw new Error(d.detail || 'diff failed');
+    if (!d.has_previous) {
+      box.innerHTML = `<div style="padding:10px 12px;border:1px dashed var(--border);border-radius:6px;color:var(--muted);font-size:12px">No earlier scan of this target to compare against — run another scan later to track changes.</div>`;
+      return;
+    }
+    const c = d.counts || {};
+    const list = (items, color) => items.length
+      ? items.map(f => `<div style="font-size:11px;color:var(--text);padding:3px 0"><span style="color:${color}">●</span> ${(f.title||'').replace(/</g,'&lt;')} <span style="color:var(--muted)">(${f.owasp} · ${f.severity})</span></div>`).join('')
+      : `<div style="font-size:11px;color:var(--muted);padding:3px 0">none</div>`;
+    box.innerHTML = `
+      <div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px;background:var(--card)">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+          <span style="font-size:11px;font-weight:800;color:#ff5470;background:rgba(255,23,68,.12);border-radius:20px;padding:2px 10px">+${c.new||0} NEW</span>
+          <span style="font-size:11px;font-weight:800;color:var(--acid);background:rgba(57,255,20,.1);border-radius:20px;padding:2px 10px">−${c.fixed||0} FIXED</span>
+          <span style="font-size:11px;font-weight:700;color:var(--muted);background:rgba(255,255,255,.05);border-radius:20px;padding:2px 10px">${c.unchanged||0} unchanged</span>
+          <button onclick="document.getElementById('o2025-diff').innerHTML=''" style="margin-left:auto;background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px">×</button>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+          <div><div style="font-size:10px;color:#ff5470;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">🆕 New since last scan</div>${list(d.new||[], '#ff5470')}</div>
+          <div><div style="font-size:10px;color:var(--acid);text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">✅ Fixed since last scan</div>${list(d.fixed||[], 'var(--acid)')}</div>
+        </div>
+      </div>`;
+  } catch (e) {
+    box.innerHTML = `<div style="padding:10px;color:var(--red);font-size:12px">Couldn't compare: ${e.message}</div>`;
+  }
 }
 
 // Update modules display on dropdown change + re-precheck on URL change
@@ -4698,41 +4801,123 @@ function _agTechId(mitreStr) {
 }
 
 async function _agPopulateScanSelect() {
-  if (_agPopulated) return;
+  // Pull scans from BOTH systems so the graph works for OWASP AND Full/Quick/etc.
+  // Option value is tagged "system:id" so _agLoadGraph hits the right endpoint.
   const sel = document.getElementById('ag-scan-select');
+  const opts = [];
+  // New OWASP active scans
   try {
-    // NEW: pull from the active OWASP scanner, not the old passive scans
     const r = await VenomAuth.authFetch(`/api/attack/list?limit=30`);
     const d = await r.json();
-    const scans = (d.scans||[]).filter(s => s.status === 'completed');
-    if (!scans.length) { sel.innerHTML = '<option value="">No completed active scans found</option>'; return; }
-    sel.innerHTML = scans.map((s, i) => {
-      const dt  = s.started_at ? new Date(s.started_at).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}) : '';
-      const url = (s.target_url || 'Unknown').replace(/^https?:\/\//,'').split('/')[0];
-      const cnt = s.total_findings != null ? ` (${s.total_findings})` : '';
-      return `<option value="${s.id||''}" ${i===0?'selected':''}>${url}${cnt} — ${dt}</option>`;
-    }).join('');
-    _agPopulated = true;
-  } catch(e) {
-    sel.innerHTML = `<option value="">Error loading scans</option>`;
-  }
+    (d.scans||[]).filter(s => s.status === 'completed').forEach(s =>
+      opts.push({ sys:'attack', id:s.id, url:s.target_url, cnt:s.total_findings, when:s.started_at, tag:'OWASP' }));
+  } catch (_) {}
+  // Old generic scans (quick / full / webapp / infra / recon)
+  try {
+    const r2 = await fetch(`${API_BASE}/api/scan/?limit=30`, { mode:'cors' });
+    const d2 = await r2.json();
+    (d2.scans||[]).filter(s => ['completed','COMPLETED'].includes(s.status)).forEach(s =>
+      opts.push({ sys:'scan', id:s.id||s.task_id, url:s.target_url,
+        cnt:(s.total_issues!=null?s.total_issues:s.total_findings), when:s.created_at||s.started_at,
+        tag:(s.scan_type||'scan').toUpperCase() }));
+  } catch (_) {}
+
+  if (!opts.length) { sel.innerHTML = '<option value="">No completed scans found</option>'; return; }
+  opts.sort((a,b) => new Date(b.when||0) - new Date(a.when||0));   // newest first
+  sel.innerHTML = opts.map((o, i) => {
+    const dt  = o.when ? new Date(o.when).toLocaleDateString('en-GB',{day:'2-digit',month:'short'}) : '';
+    const url = (o.url || 'Unknown').replace(/^https?:\/\//,'').split('/')[0];
+    const cnt = o.cnt != null ? ` (${o.cnt})` : '';
+    return `<option value="${o.sys}:${o.id}" ${i === 0 ? 'selected' : ''}>[${o.tag}] ${url}${cnt} — ${dt}</option>`;
+  }).join('');
+}
+
+// Normalize an OLD-system chain (nodes/edges) into the fields the animated map
+// + card renderer expect, so generic scans render the same as OWASP scans.
+function _agNormalizeOldChain(c) {
+  const mt = c.mitre_techniques || [];
+  const mitre = mt.length ? (typeof mt[0] === 'string' ? mt[0] : (mt[0].id || mt[0].technique || '')) : '';
+  const nodes = c.nodes || [];
+  return {
+    title:          c.title || 'Attack Path',
+    severity:       c.severity || 'medium',
+    owasp:          '',
+    mitre:          mitre,
+    entry_point:    (nodes[0] && (nodes[0].label || nodes[0].detail)) || 'Entry point',
+    impact:         c.description || (nodes.length ? (nodes[nodes.length-1].label || 'Impact') : 'Impact'),
+    attacker_steps: c.steps || [],
+    tools:          [],
+    risk_score:     c.blast_radius || 0,
+    affected_url:   '',
+    cwe_id:         '',
+  };
 }
 
 async function buildAttackGraph() {
+  await _agPopulateScanSelect();   // refreshes list + selects the NEWEST scan
+  await _agLoadGraph();
+}
+
+// Clear all saved OWASP scans + findings.
+async function clearScanHistory() {
+  if (!confirm('Delete ALL saved scans (OWASP + Full/Quick/Web App/etc.) and their findings? This cannot be undone.')) return;
+  let cleared = 0;
+  // 1) New OWASP active scans
+  try {
+    const r = await VenomAuth.authFetch('/api/attack/clear-history', { method: 'POST' });
+    const d = await r.json(); cleared += (d.deleted || 0);
+  } catch (_) {}
+  // 2) Old generic scans (quick / full / webapp / infra / recon)
+  try {
+    const r2 = await VenomAuth.authFetch('/api/scan/all', { method: 'DELETE' });
+    const d2 = await r2.json(); cleared += ((d2.deleted && d2.deleted.scans) || 0);
+  } catch (_) {}
+  // Clear the on-screen UI + refresh the history list + attack-graph dropdown
+  const vl = document.getElementById('vulns-list'); if (vl) vl.innerHTML = '';
+  const rw = document.getElementById('scan-results-wrap'); if (rw) rw.style.display = 'none';
+  const sl = document.getElementById('scan-log'); if (sl) sl.innerHTML = '';
+  try { loadHistory(); } catch (_) {}
+  try { if (typeof loadScanHistory === 'function') loadScanHistory(); } catch (_) {}
+  try { _agPopulateScanSelect(); } catch (_) {}
+  alert(`Cleared ${cleared} scan(s).`);
+}
+
+// Jump to the Attack Graph page for a SPECIFIC scan (from results / history).
+async function viewAttackGraph(scanId) {
+  showPage('attack-graph');
+  await new Promise(r => setTimeout(r, 60));
   await _agPopulateScanSelect();
   const sel = document.getElementById('ag-scan-select');
-  const sid = sel.value;
-  if (!sid) { _agShowEmpty('Run an OWASP 2025 active scan, then select it above to visualise attack paths.'); return; }
+  const want = `attack:${scanId}`;   // "View Attack Graph" is only on OWASP results
+  if (sel && scanId && [...sel.options].some(o => o.value === want)) {
+    sel.value = want;
+  }
+  await _agLoadGraph();
+}
+
+// Load + render the chains for whichever scan is selected (no re-populate).
+// The dropdown's onchange calls THIS so picking an older scan actually loads it.
+async function _agLoadGraph() {
+  const sel = document.getElementById('ag-scan-select');
+  const val = sel.value;   // "attack:19" (OWASP) or "scan:65" (Full/Quick/etc.)
+  if (!val) { _agShowEmpty('Run a scan, then select it above to visualise attack paths.'); return; }
+  const sep = val.indexOf(':');
+  const sys = sep > 0 ? val.slice(0, sep) : 'attack';
+  const id  = sep > 0 ? val.slice(sep + 1) : val;
 
   _agShowLoading();
   try {
-    // NEW: use the active-scan attack-chain endpoint
-    const r = await VenomAuth.authFetch(`/api/attack/${sid}/attack-chain`);
+    // Route to the correct endpoint for the scan's system
+    const endpoint = sys === 'attack' ? `/api/attack/${id}/attack-chain` : `/api/scan/${id}/attack-graph`;
+    const r = sys === 'attack'
+      ? await VenomAuth.authFetch(endpoint)
+      : await fetch(`${API_BASE}${endpoint}`, { mode:'cors' });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const data = await r.json();
-    const chains = data.chains || [];
+    let chains = data.chains || [];
+    if (sys === 'scan') chains = chains.map(_agNormalizeOldChain);   // old shape → renderer shape
 
-    if (!chains.length) { _agShowEmpty('No attack chains — this scan found no exploitable vulnerabilities.'); return; }
+    if (!chains.length) { _agShowEmpty('No attack chains — this scan found no exploitable vulnerabilities to chain (e.g. a Quick scan only checks headers/SSL).'); return; }
 
     // ── Stats ──────────────────────────────────────────────────────
     const allTechs   = new Set();
@@ -4750,6 +4935,7 @@ async function buildAttackGraph() {
 
     // ── Render chain cards (new format) ────────────────────────────
     document.getElementById('ag-empty').style.display = 'none';
+    _agRenderMap(chains);   // animated attack-map at the top
     document.getElementById('ag-graph').innerHTML = chains.map(_agRenderChainNew).join('');
 
     // ── Kill chain bar ─────────────────────────────────────────────
@@ -4775,6 +4961,52 @@ function _agCountUp(elId, target) {
     else el.textContent = target;
   }
   requestAnimationFrame(tick);
+}
+
+// Animated SVG attack-map: Attacker → Exploit nodes → Crown Jewels
+function _agRenderMap(chains) {
+  const el = document.getElementById('ag-map');
+  if (!el) return;
+  if (!chains || !chains.length) { el.innerHTML = ''; return; }
+  const SEV = { critical:'#e53935', high:'#fb8c00', medium:'#f9a825', low:'#00e676', info:'#4fc3f7' };
+  const ACID = '#39ff14', RED = '#ff5470';
+  const esc = s => String(s == null ? '' : s).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+  const shown = chains.slice(0, 8);
+  const n = shown.length;
+  const W = 940, padY = 50;
+  const rowGap = n > 1 ? Math.min(74, (360 - 2*padY) / (n - 1)) : 0;
+  const H = Math.max(200, padY*2 + (n - 1)*rowGap);
+  const yc = H/2, xAtt = 66, xExp = W*0.46, xJew = W - 96;
+
+  let paths = '', enodes = '';
+  shown.forEach((c, i) => {
+    const col = SEV[(c.severity||'').toLowerCase()] || '#6b7a99';
+    const y = padY + i*rowGap;
+    const crit = (c.severity||'').toLowerCase() === 'critical';
+    // attacker → exploit and exploit → jewels (animated flow dashes)
+    paths += `<path d="M${xAtt+24} ${yc} C ${(xAtt+xExp)/2} ${yc}, ${(xAtt+xExp)/2} ${y}, ${xExp-20} ${y}" fill="none" stroke="${col}" stroke-width="1.6" opacity="0.55" stroke-dasharray="5 7"><animate attributeName="stroke-dashoffset" from="24" to="0" dur="0.9s" repeatCount="indefinite"/></path>`;
+    paths += `<path d="M${xExp+20} ${y} C ${(xExp+xJew)/2} ${y}, ${(xExp+xJew)/2} ${yc}, ${xJew-24} ${yc}" fill="none" stroke="${col}" stroke-width="1.6" opacity="0.55" stroke-dasharray="5 7"><animate attributeName="stroke-dashoffset" from="24" to="0" dur="0.9s" repeatCount="indefinite"/></path>`;
+    enodes += `<g>
+      ${crit ? `<circle cx="${xExp}" cy="${y}" r="16" fill="none" stroke="${col}" stroke-width="1.6"><animate attributeName="r" from="16" to="27" dur="1.5s" repeatCount="indefinite"/><animate attributeName="opacity" from="0.7" to="0" dur="1.5s" repeatCount="indefinite"/></circle>` : ''}
+      <circle cx="${xExp}" cy="${y}" r="16" fill="${col}22" stroke="${col}" stroke-width="1.7" filter="url(#agGlow)"/>
+      <text x="${xExp}" y="${y+3.5}" text-anchor="middle" font-size="9" font-family="monospace" fill="${col}" font-weight="700">${esc(c.owasp||'')}</text>
+      <text x="${xExp}" y="${y-24}" text-anchor="middle" font-size="9.5" fill="#c9d4e6">${esc((c.title||'').slice(0,24))}</text>
+    </g>`;
+  });
+
+  el.innerHTML = `<div style="background:radial-gradient(circle at 50% -10%, rgba(57,255,20,.06), transparent 65%), var(--card); border:1px solid var(--border); border-radius:10px; padding:10px; margin-bottom:14px; overflow-x:auto">
+    <div style="font-family:var(--mono); font-size:9px; color:var(--muted); letter-spacing:.14em; text-transform:uppercase; margin:2px 4px 6px">Live Attack Map · ${chains.length} path${chains.length===1?'':'s'}</div>
+    <svg viewBox="0 0 ${W} ${H}" style="width:100%; min-width:660px; height:auto; display:block">
+      <defs><filter id="agGlow" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="2.6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
+      ${paths}
+      <g filter="url(#agGlow)"><circle cx="${xAtt}" cy="${yc}" r="23" fill="rgba(255,23,68,.14)" stroke="${RED}" stroke-width="1.9"/><text x="${xAtt}" y="${yc+6}" text-anchor="middle" font-size="18">☠</text></g>
+      <text x="${xAtt}" y="${yc+42}" text-anchor="middle" font-size="10" font-family="monospace" fill="${RED}">ATTACKER</text>
+      ${enodes}
+      <g filter="url(#agGlow)"><circle cx="${xJew}" cy="${yc}" r="23" fill="rgba(57,255,20,.12)" stroke="${ACID}" stroke-width="1.9"/><text x="${xJew}" y="${yc+7}" text-anchor="middle" font-size="16">🏰</text></g>
+      <text x="${xJew}" y="${yc+42}" text-anchor="middle" font-size="10" font-family="monospace" fill="${ACID}">CROWN JEWELS</text>
+    </svg>
+    ${chains.length > 8 ? `<div style="text-align:center; font-size:10px; color:var(--muted); padding:4px">Showing top 8 of ${chains.length} attack paths</div>` : ''}
+  </div>`;
 }
 
 function _agRenderChainNew(c, idx) {
@@ -4849,6 +5081,7 @@ function _agShowLoading() {
       ◌ &nbsp;LOADING ATTACK CHAINS...
     </div>`;
   document.getElementById('ag-graph').innerHTML = '';
+  const _agm = document.getElementById('ag-map'); if (_agm) _agm.innerHTML = '';
 }
 
 function _agShowEmpty(msg) {
@@ -4863,6 +5096,7 @@ function _agShowEmpty(msg) {
     </svg>
     <div style="font-family:var(--head);font-size:15px">${msg}</div>`;
   document.getElementById('ag-graph').innerHTML = '';
+  const _agm = document.getElementById('ag-map'); if (_agm) _agm.innerHTML = '';
 }
 
 function _agRenderChain(chain) {
@@ -6142,7 +6376,7 @@ function restoreLastSession() {
     if (!msgsEl) return;
     msgsEl.innerHTML = chatHistory.map(m =>
       m.role === 'user'
-        ? `<div class="chat-bubble user">${escapeHtml(m.content)}</div>`
+        ? _userBubble(m.content)
         : `<div class="chat-bubble ai"><div class="bubble-role">VENOM AI</div>${markdownToHtml(m.content)}</div>`
     ).join('');
     msgsEl.scrollTop = msgsEl.scrollHeight;
@@ -6159,7 +6393,7 @@ function loadChatSession(sessionId) {
     const msgsEl = document.getElementById('chat-msgs');
     msgsEl.innerHTML = chatHistory.map(m =>
       m.role === 'user'
-        ? `<div class="chat-bubble user">${escapeHtml(m.content)}</div>`
+        ? _userBubble(m.content)
         : `<div class="chat-bubble ai"><div class="bubble-role">VENOM AI</div>${markdownToHtml(m.content)}</div>`
     ).join('') || `<div class="chat-bubble ai"><div class="bubble-role">VENOM AI · ONLINE</div>Session restored. Continue where you left off.</div>`;
     msgsEl.scrollTop = msgsEl.scrollHeight;
@@ -6228,544 +6462,52 @@ function clearChat() {
 // Save chat whenever the user leaves or refreshes the page
 window.addEventListener('beforeunload', saveChatHistory);
 
-// ══════════════════════════════════════════════════════════════════════════
-// VENOM VOICE AGENT — deep male "Venom" voice via the browser Web Speech API
-// Free, offline, no API key. Picks the deepest available male voice and
-// pitches it down for a menacing tone.
-// ══════════════════════════════════════════════════════════════════════════
-// ── VENOM Voice Conversation Mode ──────────────────────────────────────────
-// Hands-free, always-listening voice chat (like Claude / ChatGPT voice):
-//   • Click once → mic stays on until you close it
-//   • Live transcript while you speak; auto-sends when you pause
-//   • VENOM speaks the reply in a natural voice, then resumes listening
-//   • Recognition auto-pauses while VENOM talks (no echo/feedback loop)
-// ══════════════════════════════════════════════════════════════════════════
-// VENOM CORE — premium 3D-style animated AI core (canvas). States:
-//   idle · listening · thinking · scanning · speaking · success · warning · error
-// Self-contained, no libraries. Renders a floating metallic V-crystal with a
-// white energy core, orbiting particles, ripples, radar sweep, holo rings.
-// ══════════════════════════════════════════════════════════════════════════
-const VenomCore = (function () {
-  const GREEN = [0, 255, 138], EMER = [25, 255, 176], AMBER = [190, 255, 70], WHITE = [248, 255, 248];
-  // V-crystal outline (same geometry as the VENOM logo), in a 0..100 box
-  const VPATH = new Path2D(
-    "M 5 5 L 95 5 L 50 92 Z  M 28 5 L 72 5 L 50 76 Z " +
-    "M 38 36 L 42 10 L 46 36 L 50 8 L 54 36 L 58 10 L 62 36 L 50 76 Z");
+// (VENOM voice agent removed)
 
-  // Per-state target parameters (smoothly interpolated)
-  const PRESETS = {
-    idle:      { glow:.55, pSpd:.22, ripple:0,  holo:0, radar:0, scan:0,  breathe:.03, warn:0, err:0, amp:.14 },
-    listening: { glow:.9,  pSpd:.7,  ripple:1,  holo:0, radar:0, scan:0,  breathe:.05, warn:0, err:0, amp:.5  },
-    thinking:  { glow:.75, pSpd:1.3, ripple:0,  holo:1, radar:0, scan:1,  breathe:.02, warn:0, err:0, amp:.2  },
-    scanning:  { glow:.85, pSpd:1.5, ripple:0,  holo:.5,radar:1, scan:1,  breathe:.02, warn:0, err:0, amp:.25 },
-    speaking:  { glow:1,   pSpd:1.0, ripple:.7, holo:0, radar:0, scan:0,  breathe:.045,warn:0, err:0, amp:.75 },
-    warning:   { glow:.7,  pSpd:.35, ripple:0,  holo:0, radar:0, scan:0,  breathe:.02, warn:1, err:0, amp:.2  },
-    error:     { glow:.4,  pSpd:.3,  ripple:0,  holo:0, radar:0, scan:0,  breathe:.01, warn:.4,err:1, amp:.1  },
-  };
-
-  let cv, ctx, W, H, cx, cy, R, raf = 0, t0 = 0, running = false;
-  let state = 'idle';
-  const cur = Object.assign({}, PRESETS.idle);   // interpolated
-  let tgt = PRESETS.idle;
-  let particles = [], ripples = [], burst = [];
-  let phase = 0, spin = 0, radar = 0, ampEnv = 0, flash = 0;
-
-  function _rgba(c, a) { return `rgba(${c[0]},${c[1]},${c[2]},${a})`; }
-  function _mix(a, b, k) { return [a[0]+(b[0]-a[0])*k, a[1]+(b[1]-a[1])*k, a[2]+(b[2]-a[2])*k]; }
-
-  function _initParticles() {
-    particles = [];
-    for (let i = 0; i < 26; i++) {
-      particles.push({
-        a: Math.random() * Math.PI * 2,
-        r: 0.62 + Math.random() * 0.5,          // orbit radius (× R)
-        tilt: 0.3 + Math.random() * 0.55,        // ellipse squash → fake 3D
-        zp: Math.random() * Math.PI * 2,         // depth phase
-        sp: 0.5 + Math.random() * 0.9,
-        sz: 0.8 + Math.random() * 1.6,
-      });
-    }
-  }
-
-  function mount(canvas) {
-    cv = canvas; if (!cv) return;
-    ctx = cv.getContext('2d');
-    W = cv.width; H = cv.height; cx = W / 2; cy = H / 2; R = W * 0.34;
-    _initParticles();
-  }
-
-  function setState(s) {
-    if (!PRESETS[s]) return;
-    // one-shot transients
-    if (s === 'success') { _spawnBurst(); flash = 1; s = 'idle'; }
-    state = s; tgt = PRESETS[s];
-    if (running) return; start();
-  }
-  function pulse() { _spawnRipple(1.2); flash = Math.max(flash, .6); }
-
-  function _spawnRipple(str) { ripples.push({ r: 0.35, a: 0.5 * (str || 1), str: str || 1 }); }
-  function _spawnBurst() {
-    for (let i = 0; i < 30; i++) {
-      const a = Math.random() * Math.PI * 2, v = 1.5 + Math.random() * 2.5;
-      burst.push({ x: cx, y: cy, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 1 });
-    }
-  }
-
-  function start() { if (running) return; running = true; t0 = performance.now(); raf = requestAnimationFrame(loop); }
-  function stop()  { running = false; if (raf) cancelAnimationFrame(raf); raf = 0; if (ctx) ctx.clearRect(0,0,W,H); }
-
-  function loop(now) {
-    if (!running) return;
-    const dt = Math.min(0.05, (now - t0) / 1000); t0 = now;
-    _step(dt); _draw();
-    raf = requestAnimationFrame(loop);
-  }
-
-  function _step(dt) {
-    // ease current params toward target
-    const k = 1 - Math.pow(0.001, dt);
-    for (const key in tgt) cur[key] += (tgt[key] - cur[key]) * k;
-    phase += dt * (0.6 + cur.pSpd);
-    spin  += dt * (0.4 + cur.pSpd * 0.9);
-    radar += dt * 2.2;
-    // synthesized audio envelope — makes the core visibly "react" while listening/speaking
-    const target = cur.amp * (0.55 + 0.45 * (
-      0.5 + 0.5 * Math.sin(phase * 6.1) * Math.sin(phase * 2.3 + 1) + (Math.random() - 0.5) * 0.25));
-    ampEnv += (Math.max(0, target) - ampEnv) * Math.min(1, dt * 12);
-    flash = Math.max(0, flash - dt * 1.6);
-    // ripples
-    if ((state === 'listening' || state === 'speaking') && Math.random() < dt * (state === 'speaking' ? 6 : 3))
-      _spawnRipple(0.6 + ampEnv);
-    for (const rp of ripples) { rp.r += dt * 1.4; rp.a -= dt * 0.7; }
-    ripples = ripples.filter(rp => rp.a > 0.02 && rp.r < 2.2);
-    for (const b of burst) { b.x += b.vx * dt * 60; b.y += b.vy * dt * 60; b.vx *= 0.96; b.vy *= 0.96; b.life -= dt * 1.3; }
-    burst = burst.filter(b => b.life > 0);
-  }
-
-  function _draw() {
-    ctx.clearRect(0, 0, W, H);
-    const col = _mix(_mix(GREEN, AMBER, cur.warn), EMER, state === 'speaking' ? 0.5 : 0);
-    const breathe = 1 + Math.sin(phase * 1.4) * cur.breathe + ampEnv * 0.06;
-    const vib = cur.warn > 0.5 ? (Math.random() - 0.5) * 2 * cur.warn : 0;
-    ctx.save();
-    ctx.translate(vib, vib);
-
-    // ── volumetric background glow ──
-    let bg = ctx.createRadialGradient(cx, cy, 0, cx, cy, R * 2.4);
-    bg.addColorStop(0, _rgba(col, 0.16 * cur.glow + ampEnv * 0.12));
-    bg.addColorStop(0.5, _rgba(col, 0.05));
-    bg.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
-
-    // ── scanning grid (floor) ──
-    if (cur.scan > 0.05 && cur.radar > 0.3) {
-      ctx.save(); ctx.globalAlpha = cur.radar * 0.25; ctx.strokeStyle = _rgba(col, 0.6); ctx.lineWidth = 1;
-      for (let i = 1; i <= 4; i++) { ctx.beginPath(); ctx.ellipse(cx, cy, R * 0.5 * i / 4 + R * 0.7, R * 0.18 * i / 4 + R * 0.25, 0, 0, Math.PI * 2); ctx.stroke(); }
-      ctx.restore();
-    }
-
-    // ── holographic rings (thinking) ──
-    if (cur.holo > 0.05) {
-      ctx.save(); ctx.globalAlpha = cur.holo * 0.7;
-      for (let i = 0; i < 3; i++) {
-        ctx.strokeStyle = _rgba(i === 2 ? [139,0,255] : col, 0.6);
-        ctx.lineWidth = 1.4;
-        ctx.beginPath();
-        ctx.ellipse(cx, cy, R * (1.05 + i * 0.12), R * (0.4 + i * 0.1),
-                    spin * (i % 2 ? -1 : 1) + i, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-      ctx.restore();
-    }
-
-    // ── radar sweep (scanning) ──
-    if (cur.radar > 0.05) {
-      ctx.save(); ctx.translate(cx, cy); ctx.rotate(radar);
-      const g = ctx.createConicGradient ? ctx.createConicGradient(0, 0, 0) : null;
-      ctx.globalAlpha = cur.radar;
-      if (g) { g.addColorStop(0, _rgba(col, 0.5)); g.addColorStop(0.12, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,0)');
-        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, R * 1.4, 0, Math.PI * 2); ctx.fill(); }
-      else { ctx.strokeStyle = _rgba(col, 0.6); ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(R*1.4,0); ctx.stroke(); }
-      ctx.restore();
-    }
-
-    // ── orbiting particles (behind core) ──
-    _drawParticles(col, -1);
-
-    // ── ripples ──
-    for (const rp of ripples) {
-      ctx.strokeStyle = _rgba(col, rp.a); ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.arc(cx, cy, R * rp.r, 0, Math.PI * 2); ctx.stroke();
-    }
-
-    // ── white energy core (bloom) ──
-    const coreR = R * (0.42 + ampEnv * 0.28) * breathe;
-    let core = ctx.createRadialGradient(cx, cy, 0, cx, cy, coreR);
-    core.addColorStop(0, _rgba(WHITE, 0.95 * cur.glow + flash * 0.4));
-    core.addColorStop(0.35, _rgba(_mix(WHITE, col, 0.5), 0.7 * cur.glow));
-    core.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = core; ctx.beginPath(); ctx.arc(cx, cy, coreR, 0, Math.PI * 2); ctx.fill();
-
-    // ── the V-crystal ──
-    _drawCrystal(col, breathe, cur.err);
-
-    // ── orbiting particles (in front) ──
-    _drawParticles(col, 1);
-
-    // ── success burst ──
-    for (const b of burst) {
-      ctx.fillStyle = _rgba(col, b.life * 0.9);
-      ctx.beginPath(); ctx.arc(b.x, b.y, 1.6 * b.life + 0.4, 0, Math.PI * 2); ctx.fill();
-    }
-
-    // ── warning ring ──
-    if (cur.warn > 0.4 && cur.err < 0.3) {
-      ctx.strokeStyle = _rgba(AMBER, 0.4 + 0.3 * Math.sin(phase * 4));
-      ctx.lineWidth = 2; ctx.setLineDash([6, 8]);
-      ctx.beginPath(); ctx.arc(cx, cy, R * 1.25, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
-    }
-
-    // ── scan lines (thinking/scanning) ──
-    if (cur.scan > 0.1) {
-      ctx.save(); ctx.beginPath(); ctx.arc(cx, cy, R * 1.15, 0, Math.PI * 2); ctx.clip();
-      ctx.globalAlpha = cur.scan * 0.12; ctx.fillStyle = _rgba(col, 1);
-      const off = (phase * 40) % 8;
-      for (let y = -off; y < H; y += 8) ctx.fillRect(0, y, W, 1.4);
-      ctx.restore();
-    }
-    ctx.restore();
-  }
-
-  function _drawParticles(col, side) {
-    for (const p of particles) {
-      const ang = p.a + phase * p.sp * (0.6 + cur.pSpd * 0.6);
-      const depth = Math.sin(ang + p.zp);          // -1 (back) .. 1 (front)
-      if (side > 0 ? depth < 0 : depth >= 0) continue;
-      const rr = R * p.r * (0.9 + ampEnv * 0.15);
-      const x = cx + Math.cos(ang) * rr;
-      const y = cy + Math.sin(ang) * rr * p.tilt;
-      const sc = 0.5 + (depth + 1) * 0.5;           // front bigger/brighter
-      ctx.fillStyle = _rgba(col, 0.15 + 0.55 * sc);
-      ctx.beginPath(); ctx.arc(x, y, p.sz * sc, 0, Math.PI * 2); ctx.fill();
-    }
-  }
-
-  function _drawCrystal(col, breathe, err) {
-    const S = R * 1.5 / 100;                         // scale the 0..100 path to ~1.5R
-    const drawOne = (dx, dy, alpha) => {
-      ctx.save();
-      ctx.translate(cx + dx, cy + dy);
-      ctx.scale(S * breathe, S * breathe);
-      ctx.translate(-50, -48);
-      // metallic fill
-      let mg = ctx.createLinearGradient(0, 0, 100, 100);
-      mg.addColorStop(0, `rgba(240,255,242,${0.95 * alpha})`);
-      mg.addColorStop(1, `rgba(120,160,130,${0.55 * alpha})`);
-      ctx.fillStyle = mg;
-      ctx.shadowColor = _rgba(col, 0.9 * alpha); ctx.shadowBlur = 14;
-      ctx.fill(VPATH, 'evenodd');
-      // neon edge
-      ctx.shadowBlur = 6; ctx.lineWidth = 1.4; ctx.strokeStyle = _rgba(col, 0.9 * alpha);
-      const tri = new Path2D("M 5 5 L 95 5 L 50 92 Z"); ctx.stroke(tri);
-      ctx.restore();
-    };
-    if (err > 0.15) {                                // fracture: shards drift then reconnect
-      const d = err * 6;
-      drawOne(-d, -d * 0.6, 0.6); drawOne(d, -d * 0.4, 0.6); drawOne(0, d, 0.6);
-    } else {
-      drawOne(0, 0, 1);
-    }
-  }
-
-  // Pause the rAF when the tab/section is hidden (perf)
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) stop(); else if (state !== 'idle' || document.getElementById('venom-listen-bar')?.style.display === 'flex') start();
-  });
-
-  return { mount, setState, pulse, start, stop, get state(){ return state; } };
-})();
-
-// State machine — the WATCHDOG is the source of truth, so a dropped browser
-// event (Chrome frequently never fires speechSynthesis 'onend') can never
-// permanently freeze the mic. States: 'idle' | 'listening' | 'thinking' | 'speaking'
-window._venomVoiceOn   = false;   // TTS output enabled
-window._venomConvoMode = false;   // full hands-free conversation loop
-window._venomState     = 'idle';
-window._venomRecogRunning = false;   // is a recognition session actually active
-let _venomVoice  = null;
-let _venomRecog  = null;
-let _venomSilenceTimer = null;
-let _venomWatchdog     = null;
-let _venomSpeakPoll    = null;
-let _venomResumeHack   = null;
-
-function _venomPickVoice() {
-  const voices = window.speechSynthesis ? speechSynthesis.getVoices() : [];
-  if (!voices.length) return null;
-  // Prefer the DEEPEST male English voices for the VENOM persona
-  const prefer = [
-    'Microsoft David - English (United States)', 'Microsoft David',
-    'Microsoft Mark - English (United States)',  'Microsoft Mark',
-    'Microsoft Guy Online (Natural) - English (United States)',
-    'Microsoft Andrew Online (Natural) - English (United States)',
-    'Microsoft Christopher Online (Natural) - English (United States)',
-    'Google UK English Male', 'Daniel', 'Alex', 'Google US English',
-  ];
-  for (const name of prefer) {
-    const v = voices.find(x => x.name === name);
-    if (v) return v;
-  }
-  return voices.find(v => /(david|mark|guy|andrew|christopher|brian|male)/i.test(v.name) && /^en/i.test(v.lang))
-      || voices.find(v => /natural/i.test(v.name) && /^en/i.test(v.lang))
-      || voices.find(v => /en-US/i.test(v.lang))
-      || voices.find(v => /^en/i.test(v.lang))
-      || voices[0];
+// ── Chat: scroll-to-bottom button ──────────────────────────────────────────
+// Render a user chat bubble WITH an edit button (loads the message back into the
+// input so it can be edited and re-sent).
+function _userBubble(text) {
+  return `<div class="chat-bubble user" style="position:relative">
+    <span class="user-msg-text">${escapeHtml(text)}</span>
+    <button class="chat-edit-btn" onclick="editUserMessage(this)" title="Edit message"
+      style="position:absolute;top:-9px;right:-9px;width:23px;height:23px;border-radius:50%;background:var(--card2);border:1px solid var(--border);color:var(--muted);cursor:pointer;opacity:0;transition:opacity .15s;display:flex;align-items:center;justify-content:center;padding:0"
+      onmouseover="this.style.color='var(--acid)';this.style.borderColor='rgba(57,255,20,.5)'" onmouseout="this.style.color='var(--muted)';this.style.borderColor='var(--border)'">
+      <svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M11.5 2.5l2 2L6 12l-3 1 1-3 7.5-7.5z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+    </button>
+  </div>`;
 }
 
-function venomSpeak(text, ondone) {
-  if (!window.speechSynthesis || !window._venomVoiceOn || !text) { if (ondone) ondone(); return; }
-  let clean = text
-    .replace(/```[\s\S]*?```/g, ' (code block shown on screen) ')
-    .replace(/`[^`]*`/g, '')
-    .replace(/[*_#>|]/g, '')
-    .replace(/\[(.*?)\]\(.*?\)/g, '$1')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (clean.length > 900) clean = clean.slice(0, 900) + '. Full details are on screen.';
-
-  _venomStopMic();                 // never capture while we talk (no echo)
-  try { speechSynthesis.cancel(); } catch (_) {}
-  clearInterval(_venomSpeakPoll);
-  clearInterval(_venomResumeHack);
-
-  const u = new SpeechSynthesisUtterance(clean);
-  if (!_venomVoice) _venomVoice = _venomPickVoice();
-  if (_venomVoice) u.voice = _venomVoice;
-  u.pitch = 0.55;  // deep VENOM voice
-  u.rate  = 0.95;  // measured, commanding
-  u.volume = 1.0;
-
-  window._venomState = 'speaking';
-  _venomSetStatus('speaking');
-
-  let done = false;
-  const finish = () => {
-    if (done) return;
-    done = true;
-    clearInterval(_venomSpeakPoll);
-    clearInterval(_venomResumeHack);
-    if (window._venomConvoMode) { window._venomState = 'listening'; }   // watchdog restarts mic
-    else { window._venomState = 'idle'; _venomSetStatus('off'); }
-    if (ondone) ondone();
-  };
-  u.onend = u.onerror = finish;
-  speechSynthesis.speak(u);
-
-  // Chrome bug #1: onend often never fires → poll speaking flag as the real signal
-  let started = false;
-  _venomSpeakPoll = setInterval(() => {
-    if (speechSynthesis.speaking) started = true;
-    if (started && !speechSynthesis.speaking && !speechSynthesis.pending) finish();
-  }, 250);
-  // Chrome bug #2: synthesis stalls after ~15s → nudge it to keep going
-  _venomResumeHack = setInterval(() => {
-    if (speechSynthesis.speaking) { try { speechSynthesis.pause(); speechSynthesis.resume(); } catch (_) {} }
-  }, 9000);
-  // Hard safety: never let 'speaking' state last longer than the text could need
-  setTimeout(finish, Math.max(4000, clean.length * 90));
-}
-
-function venomStopSpeaking() {
-  clearInterval(_venomSpeakPoll);
-  clearInterval(_venomResumeHack);
-  if (window.speechSynthesis) { try { speechSynthesis.cancel(); } catch (_) {} }
-}
-
-// ── Speech recognition — one fresh instance per listening session (robust) ──
-function _venomStartMic() {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) return;
-  if (window._venomRecogRunning) return;      // already capturing
-  // Always build a FRESH instance — reusing one across many stop/start cycles
-  // is the #1 cause of "it only listens once" in Chrome.
-  const r = new SR();
-  r.lang = 'en-US';
-  r.continuous = true;
-  r.interimResults = true;
-  r.maxAlternatives = 1;
-
-  r.onstart = () => { window._venomRecogRunning = true; if (window._venomState === 'listening') _venomSetStatus('listening'); };
-
-  r.onresult = (ev) => {
-    if (window._venomState !== 'listening') return;   // ignore stray results
-    let interim = '', final = '';
-    for (let i = ev.resultIndex; i < ev.results.length; i++) {
-      const t = ev.results[i][0].transcript;
-      if (ev.results[i].isFinal) final += t; else interim += t;
-    }
-    if (interim) _venomSetStatus('heard', interim);
-    if (final.trim()) {
-      clearTimeout(_venomSilenceTimer);
-      const text = final.trim();
-      _venomSilenceTimer = setTimeout(() => _venomSubmitSpeech(text), 400);
-    }
-  };
-
-  r.onerror = (ev) => {
-    if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
-      _venomToast('Microphone blocked. Click the 🔒/camera icon in the address bar and allow the mic, then try again.');
-      stopVenomConversation();
-    }
-    // 'no-speech' / 'aborted' / 'network' are transient — watchdog restarts
-  };
-
-  r.onend = () => {
-    window._venomRecogRunning = false;
-    if (_venomRecog === r) _venomRecog = null;
-    // Watchdog handles restart — don't restart here (avoids double-start races)
-  };
-
-  _venomRecog = r;
-  try { r.start(); }
-  catch (_) { window._venomRecogRunning = false; }
-}
-
-function _venomStopMic() {
-  window._venomRecogRunning = false;
-  clearTimeout(_venomSilenceTimer);
-  if (_venomRecog) { try { _venomRecog.abort(); } catch (_) {} _venomRecog = null; }
-}
-
-function _venomSubmitSpeech(text) {
-  if (!text) return;
+function editUserMessage(btn) {
+  const bubble = btn.closest('.chat-bubble.user');
+  const span = bubble && bubble.querySelector('.user-msg-text');
+  const text = span ? span.textContent : '';
   const inp = document.getElementById('chat-inp');
-  if (!inp) return;
-  window._venomState = 'thinking';
-  _venomStopMic();                 // stop capturing while VENOM thinks/answers
-  inp.value = text;
-  _venomSetStatus('thinking');
-  try { sendChat(); } catch (_) {}
-  // sendChat() speaks the reply on completion (venomSpeak), which returns us to
-  // 'listening'. Safety net: if no reply/speech within 45s, resume listening.
-  setTimeout(() => {
-    if (window._venomConvoMode && window._venomState === 'thinking') window._venomState = 'listening';
-  }, 45000);
-}
-
-// ── THE WATCHDOG — guarantees the mic is running whenever it should be ──────
-function _venomTick() {
-  if (!window._venomConvoMode) return;
-  if (window._venomState === 'listening' && !window._venomRecogRunning
-      && !(window.speechSynthesis && speechSynthesis.speaking)) {
-    _venomStartMic();
+  if (inp && text) {
+    inp.value = text;
+    inp.focus();
+    try { inp.dispatchEvent(new Event('input')); } catch (_) {}   // resize textarea
+    inp.setSelectionRange(text.length, text.length);
   }
 }
 
-// ── Public toggles ─────────────────────────────────────────────────────────
-function startVenomConversation() {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) { _venomToast('Voice input needs Chrome or Edge (Web Speech API not supported here).'); return; }
-  window._venomConvoMode = true;
-  window._venomVoiceOn   = true;
-  window._venomState     = 'speaking';
-  _venomVoice = _venomPickVoice();
-  _venomUpdateBtns();
-  _venomShowBar(true);
-  try { VenomCore.mount(document.getElementById('venom-core')); VenomCore.start(); } catch (_) {}
-  _venomSetStatus('speaking');
-  // Greet, then drop into listening — the watchdog turns the mic on
-  venomSpeak("Venom here! How can I help you?", () => { window._venomState = 'listening'; });
-  if (!window.speechSynthesis) window._venomState = 'listening';
-  clearInterval(_venomWatchdog);
-  _venomWatchdog = setInterval(_venomTick, 900);
+function chatScrollBottom() {
+  const el = document.getElementById('chat-msgs');
+  if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
 }
-
-function stopVenomConversation() {
-  window._venomConvoMode = false;
-  window._venomVoiceOn   = false;
-  window._venomState     = 'idle';
-  clearInterval(_venomWatchdog); _venomWatchdog = null;
-  clearTimeout(_venomSilenceTimer);
-  venomStopSpeaking();
-  _venomStopMic();
-  try { VenomCore.stop(); } catch (_) {}
-  _venomUpdateBtns();
-  _venomSetStatus('off');
-  _venomShowBar(false);
-}
-
-function toggleVenomVoice() {
-  if (window._venomConvoMode) stopVenomConversation();
-  else startVenomConversation();
-}
-
-function _venomUpdateBtns() {
-  const on = window._venomConvoMode;
-  [document.getElementById('venom-voice-btn'), document.getElementById('venom-mic-btn')].forEach(btn => {
-    if (!btn) return;
-    btn.style.color = on ? 'var(--acid)' : 'var(--muted)';
-    btn.style.borderColor = on ? 'rgba(57,255,20,.5)' : 'var(--border)';
-    btn.classList.toggle('venom-mic-live', on);
-    btn.title = on ? 'Voice conversation ON — click to stop' : 'Start hands-free voice conversation';
-  });
-  const label = document.getElementById('venom-voice-label');
-  if (label) label.textContent = on ? 'Stop Voice' : 'Voice';
-}
-
-// ── Listening indicator UI ─────────────────────────────────────────────────
-function _venomShowBar(show) {
-  const bar = document.getElementById('venom-listen-bar');
-  if (bar) bar.style.display = show ? 'flex' : 'none';
-}
-
-function _venomSetStatus(state, text) {
-  const bar   = document.getElementById('venom-listen-bar');
-  const label = document.getElementById('venom-listen-text');
-  if (!bar || !label) return;
-  bar.style.display = 'flex';
-  // Drive the animated VENOM core
-  const coreState = (state === 'heard') ? 'listening' : (state === 'off' ? 'idle' : state);
-  try { VenomCore.setState(coreState); } catch (_) {}
-  switch (state) {
-    case 'listening':
-      label.innerHTML = '<b>Listening…</b> <span style="opacity:.6">say something</span>';
-      break;
-    case 'heard':
-      label.innerHTML = '<span style="color:var(--acid)">“' + (text || '').replace(/</g,'&lt;') + '”</span>';
-      break;
-    case 'thinking':
-      label.innerHTML = '<b>VENOM is analyzing…</b>';
-      break;
-    case 'speaking':
-      label.innerHTML = '<b style="color:var(--acid)">VENOM is speaking…</b>';
-      break;
-    default:
-      label.innerHTML = 'Standing by';
-      bar.style.display = window._venomConvoMode ? 'flex' : 'none';
-  }
-}
-
-let _venomToastTimer = null;
-function _venomToast(msg) {
-  let t = document.getElementById('venom-toast');
-  if (!t) {
-    t = document.createElement('div');
-    t.id = 'venom-toast';
-    t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--card2);border:1px solid rgba(220,20,60,.4);color:var(--text);padding:12px 18px;border-radius:10px;font-size:13px;z-index:9999;box-shadow:0 8px 30px rgba(0,0,0,.5);max-width:420px';
-    document.body.appendChild(t);
-  }
-  t.textContent = msg;
-  t.style.display = 'block';
-  clearTimeout(_venomToastTimer);
-  _venomToastTimer = setTimeout(() => { t.style.display = 'none'; }, 4200);
-}
-
-// Voice list loads async in some browsers
-if (window.speechSynthesis) {
-  speechSynthesis.onvoiceschanged = () => { _venomVoice = _venomPickVoice(); };
-}
-// Stop everything if the user navigates away from the chat page
-window.addEventListener('beforeunload', () => { try { stopVenomConversation(); } catch(_){} });
+(function _wireChatScroll() {
+  const el = document.getElementById('chat-msgs');
+  const btn = document.getElementById('chat-scroll-btn');
+  if (!el || !btn) return;
+  const update = () => {
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    btn.style.display = nearBottom ? 'none' : 'flex';
+  };
+  el.addEventListener('scroll', update);
+  // Re-check when new messages arrive (content height changes)
+  new MutationObserver(update).observe(el, { childList: true, subtree: true });
+  update();
+})();
 
 // Build the context VENOM AI receives — makes it aware of what the user is doing
 function _chatContext() {
@@ -6888,7 +6630,7 @@ async function sendChat() {
   }
 
   // ── Regular text chat ─────────────────────────────────────────────────────
-  msgsEl.innerHTML += `<div class="chat-bubble user">${escapeHtml(msg)}</div>`;
+  msgsEl.innerHTML += _userBubble(msg);
   const typingId = 'typing-' + Date.now();
   const streamOutId = 'sout-' + typingId;
   msgsEl.innerHTML += `<div class="chat-bubble ai" id="${typingId}"><div class="typing-indicator"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div></div>`;
@@ -6919,7 +6661,6 @@ async function sendChat() {
         message: msg,
         session_id: _chatSessionId,
         context: _chatContext(),
-        voice: !!window._venomConvoMode,
         stream: true
       }),
       signal: _chatAbort.signal,
@@ -7021,17 +6762,30 @@ async function sendChat() {
       clearInterval(_twTimer);
       const r2 = await fetch(`${API_BASE}/api/chat/message`, {
         method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({message: msg, session_id: _chatSessionId, context: _chatContext(), voice: !!window._venomConvoMode})
+        body: JSON.stringify({message: msg, session_id: _chatSessionId, context: _chatContext()})
       });
       const d2 = await r2.json();
       reply = d2.reply || 'No response';
       if (d2.session_id) _chatSessionId = d2.session_id;
       typingEl.innerHTML = '<div class="bubble-role">VENOM AI</div>' + markdownToHtml(reply);
     }
+    // Auto-retry ONCE on a transient rate-limit / failure (Groq free-tier spikes)
+    if (/experiencing high demand|AI response failed/i.test(reply)) {
+      const _te = document.getElementById(typingId);
+      if (_te) _te.innerHTML = '<div class="bubble-role">VENOM AI</div><span style="color:var(--muted)">Servers were briefly busy — retrying…</span>';
+      await new Promise(r => setTimeout(r, 3500));
+      try {
+        const rr = await fetch(`${API_BASE}/api/chat/message`, {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({message: msg, session_id: _chatSessionId, context: _chatContext()})
+        });
+        const dd = await rr.json();
+        if (dd && dd.reply) { reply = dd.reply; if (dd.session_id) _chatSessionId = dd.session_id; }
+      } catch(_) {}
+      if (_te) _te.innerHTML = '<div class="bubble-role">VENOM AI</div>' + markdownToHtml(reply);
+    }
     chatHistory.push({role:'assistant', content: reply});
     saveChatHistory();
-    // Speak the reply if the VENOM voice agent is enabled
-    if (window._venomVoiceOn && reply) venomSpeak(reply);
   } catch(e) {
     // AbortError is expected when the user clicks Stop — render the partial reply, not an error
     if (e && (e.name === 'AbortError' || _stopRequested)) {

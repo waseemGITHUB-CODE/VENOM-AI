@@ -10,10 +10,10 @@ Instead:
 
 1. Email the maintainers at: venomaisecurity@gmail.com
 2. Include:
-   - A description of the vulnerability
-   - Steps to reproduce
-   - The potential impact
-   - Any suggested fix (optional)
+ - A description of the vulnerability
+ - Steps to reproduce
+ - The potential impact
+ - Any suggested fix (optional)
 
 We aim to respond within **72 hours** and will work with you on a coordinated disclosure.
 
@@ -25,8 +25,8 @@ As an open-source project, security fixes are applied to the `main` branch. Plea
 
 | Version | Supported |
 |---------|-----------|
-| `main` (latest) | ✅ |
-| older tags | ❌ |
+| `main` (latest) | |
+| older tags | |
 
 ---
 

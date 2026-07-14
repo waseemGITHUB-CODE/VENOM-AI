@@ -1,4 +1,4 @@
-# ⚠️ Legal Disclaimer & Acceptable Use
+# Legal Disclaimer & Acceptable Use
 
 ## Read this before using VENOM AI.
 
@@ -12,10 +12,10 @@ VENOM AI is a **penetration-testing / DAST tool** that sends **real attack traff
 
 Scanning, probing, or attacking computer systems without authorization is a **crime** in nearly every country, including:
 
-- 🇺🇸 **United States** — Computer Fraud and Abuse Act (CFAA), 18 U.S.C. § 1030
-- 🇮🇳 **India** — Information Technology Act, 2000 (Sections 43 & 66)
-- 🇬🇧 **United Kingdom** — Computer Misuse Act 1990
-- 🇪🇺 **European Union** — Directive 2013/40/EU on attacks against information systems
+- **United States** — Computer Fraud and Abuse Act (CFAA), 18 U.S.C. § 1030
+- **India** — Information Technology Act, 2000 (Sections 43 & 66)
+- **United Kingdom** — Computer Misuse Act 1990
+- **European Union** — Directive 2013/40/EU on attacks against information systems
 - …and equivalent laws elsewhere.
 
 Penalties can include **fines and imprisonment**.
@@ -51,16 +51,16 @@ These are **safeguards, not guarantees**. They can be misconfigured or bypassed.
 
 VENOM AI is intended for:
 
-- ✅ Testing **your own** applications and infrastructure
-- ✅ Authorized penetration-testing engagements (with a signed scope/contract)
-- ✅ Security research on systems you control
-- ✅ Learning and education using **legal practice targets** (e.g. OWASP Juice Shop, `demo.testfire.net`, Acunetix test sites, deliberately vulnerable VMs you host yourself)
+- Testing **your own** applications and infrastructure
+- Authorized penetration-testing engagements (with a signed scope/contract)
+- Security research on systems you control
+- Learning and education using **legal practice targets** (e.g. OWASP Juice Shop, `demo.testfire.net`, Acunetix test sites, deliberately vulnerable VMs you host yourself)
 
 VENOM AI is **NOT** intended for:
 
-- ❌ Attacking systems you don't own
-- ❌ Unauthorized "bug bounty" testing outside a program's declared scope
-- ❌ Any illegal, malicious, or harmful activity
+- Attacking systems you don't own
+- Unauthorized "bug bounty" testing outside a program's declared scope
+- Any illegal, malicious, or harmful activity
 
 ---
 

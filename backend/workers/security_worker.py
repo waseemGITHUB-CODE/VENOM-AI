@@ -231,14 +231,13 @@ def run_full_scan(task_self, url: str, user_id: str, scan_id: str,
         infra_vulns = _run_infra_checks(url, result, scan_type)
         result.vulnerabilities.extend(infra_vulns)
 
-        # ─ Step 4: Web application checks (parallel) ──────────────────
-        if scan_type in (ScanType.FULL, ScanType.QUICK, ScanType.WEBAPP):
-            _prog(scan_id, 32, "Web application vulnerability scanning")
-            webapp_vulns = _run_webapp_checks(url, result.crawled_urls)
-            result.vulnerabilities.extend(webapp_vulns)
+        # ─ Step 4: OWASP web-app checks — REMOVED ─────────────────────
+        # OWASP Top 10 testing lives in the dedicated "OWASP Scanner" (the
+        # owasp2025 active scanner) and, for these generic scans, in OWASP ZAP
+        # (Step 5) which does deep SQLi/XSS/etc. We no longer duplicate it here.
 
         # ─ Step 5: OWASP ZAP ──────────────────────────────────────────
-        if scan_type in (ScanType.FULL, ScanType.WEBAPP) and _tool_available("zap.sh"):
+        if scan_type in (ScanType.FULL, ScanType.WEBAPP) and _zap_available():
             _prog(scan_id, 50, "OWASP ZAP active scan")
             zap_vulns = run_zap_scan(url, scan_id)
             result.vulnerabilities.extend(zap_vulns)
@@ -974,6 +973,17 @@ def scan_ports_tcp(url: str) -> Tuple[List[Vulnerability], List[int]]:
 ZAP_API_URL  = os.environ.get("ZAP_API_URL",  "http://localhost:8080")
 ZAP_API_KEY  = os.environ.get("ZAP_API_KEY",  "zap-api-key")
 
+
+def _zap_available() -> bool:
+    """ZAP now runs as a SEPARATE service (not a local binary), so we probe its
+    REST API rather than checking for the zap.sh executable."""
+    try:
+        r = requests.get(f"{ZAP_API_URL}/JSON/core/view/version/",
+                         params={"apikey": ZAP_API_KEY}, timeout=5)
+        return r.ok
+    except Exception:
+        return False
+
 # ZAP risk code → our severity
 ZAP_RISK_MAP = {3: "critical", 2: "high", 1: "medium", 0: "low"}
 ZAP_CONF_MAP = {3: True, 2: True, 1: False, 0: False}   # Auto-verify if confidence >= Medium
@@ -1035,9 +1045,19 @@ def run_zap_scan(url: str, scan_id: str) -> List[Vulnerability]:
         logger.info(f"[ZAP] Retrieved {len(alerts)} alerts")
 
         # ── 5. Convert to Vulnerability objects ───────────────
+        # ZAP returns risk/confidence sometimes as ints ("3") and sometimes as
+        # text ("High"/"Medium"). Normalise both to our 0-3 scale.
+        _RISK_TXT = {"high": 3, "medium": 2, "low": 1, "informational": 0, "info": 0}
+        _CONF_TXT = {"user confirmed": 4, "high": 3, "medium": 2, "low": 1,
+                     "false positive": 0, "informational": 0}
+        def _lvl(v, textmap):
+            try:
+                return int(v)
+            except (ValueError, TypeError):
+                return textmap.get(str(v).strip().lower(), 0)
         for alert in alerts:
-            risk    = int(alert.get("riskcode",   0))
-            conf    = int(alert.get("confidence", 0))
+            risk    = _lvl(alert.get("riskcode", alert.get("risk", 0)), _RISK_TXT)
+            conf    = _lvl(alert.get("confidence", 0), _CONF_TXT)
             sev     = ZAP_RISK_MAP.get(risk, "low")
             confirm = ZAP_CONF_MAP.get(conf, False)
 

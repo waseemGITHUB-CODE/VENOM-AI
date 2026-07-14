@@ -31,14 +31,14 @@ Paste both into `backend/.env`. **The two secrets MUST be different.**
 
 1. Go to **https://resend.com** and create a free account (3,000 emails/month).
 2. **Add a domain** (or use the free `onboarding@resend.dev` for testing only).
-   - Add the DNS records Resend shows you (SPF, DKIM).
-   - Wait for verification (usually < 5 min).
+ - Add the DNS records Resend shows you (SPF, DKIM).
+ - Wait for verification (usually < 5 min).
 3. Go to **API Keys** → **Create API Key** → name it `venom-ai` → copy the `re_...` token.
 4. Paste into `backend/.env`:
-   ```env
-   RESEND_API_KEY=re_xxxxxxxxxxxxxxxxxxxxxxxx
-   EMAIL_FROM=VENOM AI <noreply@yourdomain.com>
-   ```
+ ```env
+ RESEND_API_KEY=re_xxxxxxxxxxxxxxxxxxxxxxxx
+ EMAIL_FROM=VENOM AI <noreply@yourdomain.com>
+ ```
 
 > **Don't have a domain yet?** Use `EMAIL_FROM=onboarding@resend.dev` to start.
 > Only test emails to your own account will deliver — that's fine for dev.
@@ -52,14 +52,14 @@ If you want Google sign-in to appear on the login/signup pages:
 1. Go to **https://console.cloud.google.com/apis/credentials**
 2. **Create Credentials → OAuth client ID → Web application**
 3. **Authorized redirect URIs**:
-   - For local dev: `http://localhost:8000/api/auth/google/callback`
-   - For production: `https://api.yourdomain.com/api/auth/google/callback`
+ - For local dev: `http://localhost:8000/api/auth/google/callback`
+ - For production: `https://api.yourdomain.com/api/auth/google/callback`
 4. Copy the Client ID + Client Secret into `backend/.env`:
-   ```env
-   GOOGLE_CLIENT_ID=xxxx.apps.googleusercontent.com
-   GOOGLE_CLIENT_SECRET=GOCSPX-xxxx
-   GOOGLE_REDIRECT_URI=http://localhost:8000/api/auth/google/callback
-   ```
+ ```env
+ GOOGLE_CLIENT_ID=xxxx.apps.googleusercontent.com
+ GOOGLE_CLIENT_SECRET=GOCSPX-xxxx
+ GOOGLE_REDIRECT_URI=http://localhost:8000/api/auth/google/callback
+ ```
 
 If you leave `GOOGLE_CLIENT_ID` blank, the "Continue with Google" button is hidden automatically.
 
@@ -100,7 +100,7 @@ That means the `users`, `refresh_tokens`, and `auth_tokens` tables were auto-cre
 | Visit dashboard | http://localhost:3000/ | Redirects to `/login.html` |
 | Sign up | http://localhost:3000/signup.html | Creates account, sends verification email |
 | Check inbox | (your email) | Click "Verify Email" link |
-| Verified | http://localhost:3000/verify-email.html?token=... | "Email verified ✓" |
+| Verified | http://localhost:3000/verify-email.html?token=... | "Email verified " |
 | Log out | (user menu in sidebar) | Bounced to `/login.html` |
 | Log in | http://localhost:3000/login.html | Lands on dashboard |
 | Forgot pw | http://localhost:3000/forgot-password.html | Sends reset email |
@@ -118,14 +118,14 @@ All endpoints under `/api/auth/`:
 | POST | `/login` | — | Email/password login, returns tokens |
 | POST | `/refresh` | — | Exchange refresh for new access (rotates refresh too) |
 | POST | `/logout` | — | Revoke a refresh token |
-| POST | `/logout-all` | ✓ | Revoke ALL refresh tokens (sign out everywhere) |
-| GET | `/me` | ✓ | Current user profile |
-| PATCH | `/me` | ✓ | Update profile (full_name, company_name, avatar_url) |
+| POST | `/logout-all` | | Revoke ALL refresh tokens (sign out everywhere) |
+| GET | `/me` | | Current user profile |
+| PATCH | `/me` | | Update profile (full_name, company_name, avatar_url) |
 | POST | `/verify-email` | — | Confirm email-verification token |
 | POST | `/resend-verification` | — | Resend verification link |
 | POST | `/forgot-password` | — | Send password-reset email |
 | POST | `/reset-password` | — | Set new password via reset token |
-| POST | `/change-password` | ✓ | Change password while logged in |
+| POST | `/change-password` | | Change password while logged in |
 | GET | `/google` | — | Start Google OAuth flow |
 | GET | `/google/callback` | — | OAuth callback (Google redirects here) |
 | GET | `/providers` | — | Which login methods are enabled |

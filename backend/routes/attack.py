@@ -139,6 +139,7 @@ def _to_dict_finding(f: AttackFinding) -> dict:
         "impact_score":   f.impact_score,
         "risk_score":     f.risk_score,
         "verified":       f.verified,
+        "false_positive": bool(getattr(f, "false_positive", False)),
         "confidence":     getattr(f, "confidence", "probable"),
         "confidence_reason": getattr(f, "confidence_reason", None),
         "source_tool":    f.source_tool,
@@ -382,9 +383,40 @@ def get_attack_scan(
         AttackFinding.risk_score.desc(),
     ).all()
 
-    # Split into two groups
-    vulnerabilities = [_to_dict_finding(f) for f in all_findings if f.category == "vulnerability"]
-    hardening       = [_to_dict_finding(f) for f in all_findings if f.category == "hardening"]
+    # Split into two groups — findings marked as false positives are hidden
+    _active = [f for f in all_findings if not bool(getattr(f, "false_positive", False))]
+
+    # Collapse duplicates of the same vuln type + title (e.g. the same SSTI found
+    # on 32 forms) into ONE representative row + a location count, so results are
+    # readable. Applies to already-saved scans at read time.
+    def _collapse(rows):
+        groups, order = {}, []
+        for f in rows:
+            key = ((f.owasp or ""), (f.title or "").strip().lower())
+            groups.setdefault(key, []).append(f)
+            if key not in order:
+                order.append(key)
+        out = []
+        for key in order:
+            grp = groups[key]
+            d = _to_dict_finding(grp[0])
+            if len(grp) > 1:
+                locs = []
+                for g in grp:
+                    u = getattr(g, "affected_url", None)
+                    if u and u not in locs:
+                        locs.append(u)
+                d["locations"] = len(grp)
+                extra = f"\n\nDetected on {len(grp)} location(s)"
+                if locs[:5]:
+                    extra += ": " + ", ".join(locs[:5]) + ("…" if len(locs) > 5 else "")
+                d["description"] = (d.get("description") or "") + extra + "."
+            out.append(d)
+        return out
+
+    vulnerabilities = _collapse([f for f in _active if f.category == "vulnerability"])
+    hardening       = _collapse([f for f in _active if f.category == "hardening"])
+    dismissed_count = sum(1 for f in all_findings if bool(getattr(f, "false_positive", False)))
 
     # Sort vulns by CONFIDENCE first (true positives on top), then risk, then severity
     confidence_order = {"confirmed": 0, "probable": 1, "suspected": 2, "hardening": 3}
@@ -414,7 +446,89 @@ def get_attack_scan(
                 cat: sum(1 for v in vulnerabilities if v["owasp"] == cat)
                 for cat in ("A01","A02","A03","A04","A05","A06","A07","A08","A09","A10")
             },
+            "dismissed": dismissed_count,
         },
+    }
+
+
+@router.post("/finding/{finding_id}/false-positive")
+def toggle_false_positive(
+    finding_id: int,
+    body: dict = None,
+    current_user: Optional[_AuthUser] = Depends(get_optional_user),
+    db: Session = Depends(get_db),
+):
+    """Mark a finding as a false positive (or restore it). Dismissed findings are
+    hidden from results and won't reappear on re-render."""
+    user = _require_user(current_user)
+    f = db.query(AttackFinding).join(AttackScan, AttackFinding.scan_id == AttackScan.id).filter(
+        AttackFinding.id == finding_id,
+        AttackScan.owner_id == user.id,
+    ).first()
+    if not f:
+        raise HTTPException(status_code=404, detail="Finding not found")
+    value = True if body is None else bool(body.get("value", True))
+    f.false_positive = value
+    if hasattr(f, "is_false_positive"):
+        f.is_false_positive = value
+    db.commit()
+    return {"ok": True, "finding_id": finding_id, "false_positive": value}
+
+
+@router.get("/{scan_id}/diff")
+def scan_diff(
+    scan_id: int,
+    current_user: Optional[_AuthUser] = Depends(get_optional_user),
+    db: Session = Depends(get_db),
+):
+    """Compare this scan to the PREVIOUS completed scan of the same target.
+    Returns findings that are new, fixed (gone), or unchanged."""
+    user = _require_user(current_user)
+    cur = db.query(AttackScan).filter(
+        AttackScan.id == scan_id, AttackScan.owner_id == user.id,
+    ).first()
+    if not cur:
+        raise HTTPException(status_code=404, detail="Scan not found")
+
+    prev = db.query(AttackScan).filter(
+        AttackScan.owner_id == user.id,
+        AttackScan.target_url == cur.target_url,
+        AttackScan.status == "completed",
+        AttackScan.id != cur.id,
+        AttackScan.started_at < cur.started_at,
+    ).order_by(AttackScan.started_at.desc()).first()
+
+    def _key(f):
+        return f"{(f.owasp or '').strip()}|{(f.title or '').strip().lower()}"
+
+    def _load(sid):
+        rows = db.query(AttackFinding).filter(
+            AttackFinding.scan_id == sid,
+            AttackFinding.false_positive == False,   # noqa: E712
+        ).all()
+        return {_key(f): f for f in rows}
+
+    cur_map = _load(cur.id)
+    if not prev:
+        return {"ok": True, "has_previous": False,
+                "current_scan": {"id": cur.id, "target": cur.target_url},
+                "new": [], "fixed": [], "unchanged": list(cur_map.keys()),
+                "counts": {"new": 0, "fixed": 0, "unchanged": len(cur_map)}}
+
+    prev_map = _load(prev.id)
+    brief = lambda f: {"title": f.title, "owasp": f.owasp, "severity": f.severity,
+                       "confidence": getattr(f, "confidence", "probable")}
+    new_keys   = [k for k in cur_map if k not in prev_map]
+    fixed_keys = [k for k in prev_map if k not in cur_map]
+    same_keys  = [k for k in cur_map if k in prev_map]
+    return {
+        "ok": True, "has_previous": True,
+        "current_scan":  {"id": cur.id,  "target": cur.target_url,  "at": cur.started_at.isoformat()  if cur.started_at  else None},
+        "previous_scan": {"id": prev.id, "target": prev.target_url, "at": prev.started_at.isoformat() if prev.started_at else None},
+        "new":       [brief(cur_map[k])  for k in new_keys],
+        "fixed":     [brief(prev_map[k]) for k in fixed_keys],
+        "unchanged": [brief(cur_map[k])  for k in same_keys],
+        "counts": {"new": len(new_keys), "fixed": len(fixed_keys), "unchanged": len(same_keys)},
     }
 
 
@@ -436,6 +550,32 @@ def cancel_attack_scan(
         return {"message": f"Scan already {s.status}"}
     request_cancel(scan_id)
     return {"message": "Cancel requested. Scan will stop at next checkpoint."}
+
+
+@router.post("/clear-history")
+def clear_attack_history(
+    current_user: Optional[_AuthUser] = Depends(get_optional_user),
+    db: Session = Depends(get_db),
+):
+    """Delete ALL finished OWASP scans + findings (keeps running ones).
+    In single-user mode, clears every scan regardless of owner_id (some are saved
+    anonymously) so 'Clear History' actually empties the list."""
+    user = _require_user(current_user)
+    active = ("queued", "running_recon", "planning", "running_attacks", "verifying")
+    from auth.dependencies import _single_user_mode
+    q = db.query(AttackScan)
+    if not _single_user_mode():
+        q = q.filter(AttackScan.owner_id == user.id)
+    scans = q.all()
+    deleted = 0
+    for s in scans:
+        st = getattr(s.status, "value", s.status)
+        if str(st) in active:
+            continue
+        db.delete(s)
+        deleted += 1
+    db.commit()
+    return {"ok": True, "deleted": deleted}
 
 
 @router.delete("/{scan_id}")

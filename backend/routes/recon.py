@@ -39,6 +39,37 @@ from security.domain_verify import normalize_domain
 logger = logging.getLogger("venom.recon_route")
 router = APIRouter()
 
+# ── Passive OSINT intel sweep (attack-surface profile) ──────────────────────
+import asyncio as _aio
+from security.osint import gather_intel as _gather_intel
+
+
+class IntelRequest(BaseModel):
+    target: str
+
+
+@router.post("/intel")
+async def recon_intel(req: IntelRequest,
+                      db: Session = Depends(get_db),
+                      current_user: Optional[_AuthUser] = Depends(get_optional_user)):
+    """
+    Passive attack-surface recon: subdomains, DNS/email posture, WHOIS, HTTP
+    + security headers, TLS, Wayback URLs, robots. No attack payloads are sent.
+    """
+    target = (req.target or "").strip()
+    if not target:
+        raise HTTPException(status_code=400, detail="target required")
+    # Safety: even passive intel respects the forbidden-target blocklist
+    try:
+        blocked = check_forbidden(db, target if "://" in target else "http://" + target)
+        if blocked:
+            raise HTTPException(status_code=403, detail=blocked.get("reason", "Target is on the forbidden list"))
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+    return await _aio.to_thread(_gather_intel, target)
+
 
 # ─── Schemas ─────────────────────────────────────────────────────────────────
 
