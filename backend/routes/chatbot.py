@@ -509,11 +509,16 @@ _groq_key_index = 0          # which key is currently active
 _groq_key_cooldowns: dict[int, float] = {}   # index → epoch time when it can be retried
 
 def _all_groq_keys() -> list[str]:
-    """Collect all configured Groq keys from env (GROQ_API_KEY, GROQ_API_KEY_2 … _4)."""
+    """Collect all configured Groq keys from env.
+
+    Accepts GROQ_API_KEY (primary) and GROQ_API_KEY_1..._4. GROQ_API_KEY and
+    GROQ_API_KEY_1 are aliases for the first key, so either name works.
+    Duplicate key values are collapsed.
+    """
     keys = []
-    for suffix in ["", "_2", "_3", "_4"]:
+    for suffix in ["", "_1", "_2", "_3", "_4"]:
         k = os.getenv(f"GROQ_API_KEY{suffix}", "").strip()
-        if k:
+        if k and k not in keys:
             keys.append(k)
     return keys
 
