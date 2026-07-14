@@ -2226,92 +2226,12 @@ def calculate_score(result: ScanResult) -> ScanResult:
 # 21.  ASYNC DATABASE PERSISTENCE
 # ─────────────────────────────────────────────────────────────────────────────
 async def store_scan_results_async(scan_id: str, result: ScanResult) -> None:
-    """
-    Async PostgreSQL persistence using SQLAlchemy 2.0 async.
-
-    In production: uncomment SQLAlchemy imports and adapt to your engine setup.
-    """
+    """Log-only stub; actual persistence happens via the sync ORM path elsewhere."""
     logger.info(
         f"[DB] Persisting scan {scan_id} — score={result.security_score} "
         f"grade={result.grade} vulns={len(result.confirmed_vulns)} "
         f"duration={result.scan_duration_s}s"
     )
-
-    # ── Production implementation: ───────────────────────────
-    # from database import AsyncSessionLocal
-    # from models.scan import ScanResultORM, VulnerabilityORM
-    #
-    # async with AsyncSessionLocal() as session:
-    #     async with session.begin():
-    #
-    #         # Upsert scan result
-    #         scan_orm = ScanResultORM(
-    #             id              = scan_id,
-    #             url             = result.url,
-    #             user_id         = result.user_id,
-    #             scan_type       = result.scan_type,
-    #             status          = result.status,
-    #             security_score  = result.security_score,
-    #             grade           = result.grade,
-    #             headers_score   = result.headers_score,
-    #             ssl_score       = result.ssl_score,
-    #             port_score      = result.port_score,
-    #             vuln_score      = result.vuln_score,
-    #             auth_score      = result.auth_score,
-    #             tool_score      = result.tool_score,
-    #             critical_count  = result.critical_count,
-    #             high_count      = result.high_count,
-    #             medium_count    = result.medium_count,
-    #             low_count       = result.low_count,
-    #             total_issues    = result.total_issues,
-    #             nmap_findings   = result.nmap_findings,
-    #             zap_findings    = result.zap_findings,
-    #             nuclei_findings = result.nuclei_findings,
-    #             open_ports      = result.open_ports,
-    #             detected_tech   = result.detected_tech,
-    #             tools_used      = result.tools_used,
-    #             ai_summary      = result.ai_summary,
-    #             ai_risk_narrative = result.ai_risk_narrative,
-    #             ai_remediation_plan = result.ai_remediation_plan,
-    #             scan_duration_s = result.scan_duration_s,
-    #             scanned_at      = result.scanned_at,
-    #         )
-    #         session.add(scan_orm)
-    #
-    #         # Bulk insert confirmed vulnerabilities
-    #         vuln_orms = [
-    #             VulnerabilityORM(
-    #                 result_id      = scan_id,
-    #                 vuln_type      = v.vuln_type,
-    #                 title          = v.title,
-    #                 severity       = v.severity,
-    #                 cvss_score     = v.cvss_score,
-    #                 cve_id         = v.cve_id,
-    #                 cwe_id         = v.cwe_id,
-    #                 source_tool    = v.source_tool,
-    #                 description    = v.description,
-    #                 evidence       = v.evidence,
-    #                 affected_url   = v.affected_url,
-    #                 recommendation = v.recommendation,
-    #                 ai_explanation = v.ai_explanation,
-    #                 ai_remediation = v.ai_remediation,
-    #                 ai_risk_level  = v.ai_risk_level,
-    #                 parameter      = v.parameter,
-    #                 false_positive = v.false_positive,
-    #                 verified       = v.verified,
-    #                 tags           = v.tags,
-    #                 http_method    = v.http_method,
-    #             )
-    #             for v in result.confirmed_vulns
-    #         ]
-    #         session.add_all(vuln_orms)
-    #
-    #         # Update task log
-    #         await session.execute(
-    #             "UPDATE task_logs SET status='done', progress=100, "
-    #             "updated_at=NOW() WHERE task_id=:tid",
-    #             {"tid": scan_id}
-    #         )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
