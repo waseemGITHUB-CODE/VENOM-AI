@@ -569,9 +569,9 @@ h1 {
         throw new Error(e.detail || 'Delete failed');
       }
       showToast('Account deleted. Goodbye.');
-      // Clear local session and redirect to login after a beat
-      try { VenomAuth.logout(); } catch (_) {}
-      setTimeout(() => location.replace('/login.html?deleted=1'), 1200);
+      // Clear local session and redirect home after a beat
+      try { VenomAuth.clearSession(); VenomAuth.clearAppData(); } catch (_) {}
+      setTimeout(() => location.replace('/'), 1200);
     } catch (e) {
       btn.textContent = 'Permanently Delete';
       btn.disabled = false;

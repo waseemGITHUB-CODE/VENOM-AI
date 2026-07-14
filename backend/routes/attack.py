@@ -562,11 +562,7 @@ def clear_attack_history(
     anonymously) so 'Clear History' actually empties the list."""
     user = _require_user(current_user)
     active = ("queued", "running_recon", "planning", "running_attacks", "verifying")
-    from auth.dependencies import _single_user_mode
-    q = db.query(AttackScan)
-    if not _single_user_mode():
-        q = q.filter(AttackScan.owner_id == user.id)
-    scans = q.all()
+    scans = db.query(AttackScan).all()
     deleted = 0
     for s in scans:
         st = getattr(s.status, "value", s.status)

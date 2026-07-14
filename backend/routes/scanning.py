@@ -1163,18 +1163,10 @@ async def clear_all_scans(current_user: _AuthUser = Depends(get_optional_user)):
         vuln_count = 0
         scan_count = 0
 
-        # In single-user mode (self-hosted, one operator) clear EVERYTHING —
-        # scans are often saved with owner_id=None, so filtering by the local
+        # VENOM is single-user (self-hosted, one operator) — clear EVERYTHING.
+        # Scans are often saved with owner_id=None, so filtering by the local
         # user's id would leave them behind ("Cleared 0" bug).
-        from auth.dependencies import _single_user_mode
-        scan_q = db.query(models.ScanJob)
-        if not _single_user_mode():
-            if current_user:
-                scan_q = scan_q.filter(models.ScanJob.owner_id == current_user.id)
-            else:
-                scan_q = scan_q.filter(models.ScanJob.owner_id.is_(None))
-
-        scan_ids = [s.id for s in scan_q.all()]
+        scan_ids = [s.id for s in db.query(models.ScanJob).all()]
 
         # Delete vulnerabilities first (FK dep)
         if scan_ids and hasattr(models, "Vulnerability"):

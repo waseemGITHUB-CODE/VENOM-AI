@@ -109,9 +109,6 @@ That's it. All six services (API, worker, scheduler, Postgres, Redis, frontend) 
 | **Groq** | Required for AI | Yes | [console.groq.com](https://console.groq.com) | Attack planning, explanations, code fixes, chatbot |
 | **Tavily** | Optional | Yes (1k/mo) | [tavily.com](https://tavily.com) | Accurate AI web search for the chatbot |
 | **VirusTotal** | Optional | Yes (500/day) | [virustotal.com](https://virustotal.com) | Threat intel lookups |
-| **Resend** | Optional | Yes (3k/mo) | [resend.com](https://resend.com) | Verification / reset emails |
-| **Google OAuth** | Optional | Yes | [console.cloud.google.com](https://console.cloud.google.com) | "Sign in with Google" |
-| **Gmail SMTP** | Optional | Yes | [myaccount.google.com](https://myaccount.google.com) | Alt email sender |
 
 Full setup instructions for each key are inside [`backend/.env.example`](backend/.env.example).
 
@@ -147,9 +144,9 @@ Ollama is **optional and only used as a fallback** — Groq stays primary becaus
 ## How to Use
 
 ### 1. Open VENOM
-Open http://localhost:3000 — it opens **straight to the dashboard**. By default VENOM runs in **single-user mode** (`SINGLE_USER_MODE=true`), so there's **no login or signup** — just like running OWASP ZAP or Burp on your own machine.
+Open http://localhost:3000 — it opens **straight to the dashboard**. VENOM is single-user by design — no login, no signup, no accounts — just like running OWASP ZAP or Burp on your own machine.
 
-> Sharing one instance with a small team? Set `SINGLE_USER_MODE=false` in `backend/.env` to enable the full login/signup system (optionally with email verification via Resend/SMTP or "Sign in with Google").
+> Want the extra consent/domain-verification/scan-limit safety gates even on a single-operator install? Set `SINGLE_USER_MODE=false` in `backend/.env`.
 
 ### 2. Verify a domain you own
 Before you can run an **active** scan on your own site, prove you own it:
@@ -233,7 +230,7 @@ All configuration is via `backend/.env`. See [`backend/.env.example`](backend/.e
 | `TAVILY_API_KEY` | — | Optional; enables accurate AI web search |
 | `ENV` | `development` | `production` hides `/api/docs` |
 | `ALLOWED_ORIGINS` | localhost | Set to your domain in prod |
-| `FRONTEND_URL` | `localhost:3000` | Used in email links |
+| `SINGLE_USER_MODE` | `true` | `false` adds consent/domain-verification/scan-limit gates |
 
 ---
 

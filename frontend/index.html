@@ -2192,15 +2192,6 @@ LLaMA 3 / Mixtral<br>Custom KB (RAG)<br>Context-aware chat<br>Local AI Engine
     if (at && !init.headers['Authorization']) init.headers['Authorization'] = 'Bearer ' + at;
 
     let r = await _origFetch(input, init);
-    if (r.status === 401 && VenomAuth.getRefreshToken()) {
-      const newTok = await VenomAuth.refreshAccessToken();
-      if (newTok) {
-        init.headers['Authorization'] = 'Bearer ' + newTok;
-        r = await _origFetch(input, init);
-      } else {
-        VenomAuth.redirectToLogin();
-      }
-    }
     // ── Quota / feature-gate handler ──
     if (r.status === 429) {
       try {
@@ -4739,7 +4730,6 @@ function showScanCompletePopup(opts) {
 }
 
 // Email functions removed — VENOM AI uses in-app notifications only.
-async function emailReport() {}
 async function saveMonitorEmail() {}
 async function clearMonitorEmail() {}
 function _applyMonitorEmailUI() {}
@@ -5538,10 +5528,6 @@ function _ensureRazorpaySdk() {
 }
 
 async function showUpgradeModal(planCode) {
-  if (!window.VenomAuth || !VenomAuth.isLoggedIn()) {
-    location.href = '/login.html?next=/';
-    return;
-  }
   try {
     // 1. Check that Razorpay is enabled on the backend
     const cfgR = await fetch(VenomAuth.getApiBase() + '/api/billing/config');
@@ -5859,8 +5845,8 @@ window.spReallyDelete = async function() {
       throw new Error(e.detail || 'Delete failed');
     }
     _showToast('Account deleted. Goodbye.', 'alert');
-    try { VenomAuth.logout(); } catch(_) {}
-    setTimeout(() => location.replace('/login.html?deleted=1'), 1200);
+    try { VenomAuth.clearSession(); VenomAuth.clearAppData(); } catch(_) {}
+    setTimeout(() => location.replace('/'), 1200);
   } catch(e) {
     btn.textContent = 'Permanently Delete';
     btn.disabled = false;

@@ -59,7 +59,13 @@
     APP_DATA_KEYS.forEach(k => localStorage.removeItem(k));
     sessionStorage.clear();
   }
-  function isLoggedIn() { return !!getAccessToken(); }
+
+  // VENOM is single-user (self-hosted) — every request is always authenticated
+  // as the one local account, no login required. These stay `true`/no-op so
+  // any legacy call sites keep working without a redirect to a login page.
+  function isLoggedIn() { return true; }
+  function requireAuth() { return true; }
+  function redirectIfLoggedIn() {}
 
   // ── API base detection ─────────────────────────────────────────────────
   async function detectApiBase() {
@@ -73,34 +79,7 @@
   }
   function getApiBase() { return API_BASE; }
 
-  // ── Refresh in-flight dedupe (so 5 parallel 401s don't trigger 5 refreshes) ─
-  let _refreshPromise = null;
-  async function refreshAccessToken() {
-    if (_refreshPromise) return _refreshPromise;
-    const rt = getRefreshToken();
-    if (!rt) return null;
-
-    _refreshPromise = (async () => {
-      try {
-        const r = await fetch(API_BASE + '/api/auth/refresh', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ refresh_token: rt }),
-        });
-        if (!r.ok) { clearSession(); return null; }
-        const data = await r.json();
-        setSession(data);
-        return data.access_token;
-      } catch {
-        return null;
-      } finally {
-        _refreshPromise = null;
-      }
-    })();
-    return _refreshPromise;
-  }
-
-  // ── authFetch — drop-in fetch() replacement that adds Authorization + auto-refreshes on 401 ─
+  // ── authFetch — drop-in fetch() replacement that adds Authorization if we have one ─
   async function authFetch(url, opts = {}) {
     const full = url.startsWith('http') ? url : (API_BASE + url);
     const init = { ...opts, headers: { ...(opts.headers || {}) } };
@@ -108,49 +87,21 @@
     const at = getAccessToken();
     if (at) init.headers['Authorization'] = 'Bearer ' + at;
 
-    let r = await fetch(full, init);
-
-    if (r.status === 401 && getRefreshToken()) {
-      const newToken = await refreshAccessToken();
-      if (newToken) {
-        init.headers['Authorization'] = 'Bearer ' + newToken;
-        r = await fetch(full, init);
-      } else {
-        // refresh failed → kick to login
-        redirectToLogin();
-      }
-    }
-    return r;
+    return fetch(full, init);
   }
 
-  // ── Guards & redirects ─────────────────────────────────────────────────
-  function redirectToLogin(returnTo) {
-    const to = returnTo || (location.pathname + location.search);
+  function redirectToLogin() {
+    // No login page in single-user mode — just clear any stale local session.
     clearSession();
-    location.href = '/login.html?next=' + encodeURIComponent(to);
-  }
-  function requireAuth() {
-    if (!isLoggedIn()) { redirectToLogin(); return false; }
-    return true;
-  }
-  function redirectIfLoggedIn(target) {
-    if (isLoggedIn()) location.href = target || '/';
   }
 
   // ── Logout ─────────────────────────────────────────────────────────────
+  // No login system in single-user mode — "logout" just resets locally cached
+  // app data so a fresh session starts clean.
   async function logout(redirect = true) {
-    const rt = getRefreshToken();
-    if (rt) {
-      try {
-        await fetch(API_BASE + '/api/auth/logout', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ refresh_token: rt }),
-        });
-      } catch {}
-    }
     clearSession();
-    if (redirect) location.href = '/login.html';
+    clearAppData();
+    if (redirect) location.href = '/';
   }
 
   // ── Refresh user profile from server (call after settings change) ─────
@@ -231,7 +182,7 @@
     getAccessToken, getRefreshToken, getUser,
     setSession, clearSession, clearAppData,
     isLoggedIn, requireAuth, redirectIfLoggedIn, redirectToLogin,
-    authFetch, refreshAccessToken, refreshMe,
+    authFetch, refreshMe,
     logout,
     BRAND_LOGO_SVG, injectLogo,
     APP_DATA_KEYS,

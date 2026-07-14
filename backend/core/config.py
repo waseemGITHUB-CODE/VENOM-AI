@@ -29,33 +29,6 @@ class Settings(BaseSettings):
     GROQ_API_KEY:    str = ""
     GROQ_MODEL:      str = "llama3.1-8b-instant"
 
-    # Auth — JWT
-    SECRET_KEY:                  str = "dev-secret-change-in-production"
-    JWT_REFRESH_SECRET:          str = "dev-refresh-secret-change-in-production"
-    ALGORITHM:                   str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 15        # short-lived access token
-    REFRESH_TOKEN_EXPIRE_DAYS:   int = 30        # long-lived refresh token
-    EMAIL_TOKEN_EXPIRE_HOURS:    int = 24        # email verification link lifetime
-    RESET_TOKEN_EXPIRE_HOURS:    int = 1         # password reset link lifetime
-
-    # Auth — Google OAuth (optional)
-    GOOGLE_CLIENT_ID:     str = ""
-    GOOGLE_CLIENT_SECRET: str = ""
-    GOOGLE_REDIRECT_URI:  str = "http://localhost:8000/api/auth/google/callback"
-
-    # Frontend URL (used in email links — e.g. /verify-email?token=...)
-    FRONTEND_URL: str = "http://localhost:8080"
-
-    # Email — Resend (primary), with SMTP as legacy fallback
-    RESEND_API_KEY: str = ""
-    EMAIL_FROM:     str = "VENOM AI <noreply@venom-ai.local>"
-
-    # Legacy IMAP (inbound) — kept for monitoring inbox
-    IMAP_HOST:      str = "imap.gmail.com"
-    IMAP_PORT:      int = 993
-    EMAIL_USER:     str = ""
-    EMAIL_PASSWORD: str = ""
-
     # Storage
     UPLOAD_DIR:       str = "./uploads"
     REPORTS_DIR:      str = "./reports"
