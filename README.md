@@ -66,7 +66,25 @@ VENOM includes built-in guardrails to help you stay legal:
 
 ---
 
-## Quick Start (5 minutes)
+## Try VENOM Live (No Install)
+
+Want to see it working right now without installing anything? Open it in **GitHub Codespaces** — GitHub builds and runs the full stack (Postgres, Redis, API, worker, frontend) in the cloud, under **your own** free GitHub quota, and gives you a live URL in a few minutes.
+
+1. On this repo, click **Code → Codespaces → Create codespace on main**
+2. Wait for the containers to build (first run takes a few minutes)
+3. Open the forwarded **port 3000** tab — that's your live VENOM AI
+4. *(Optional, for AI features)* Paste a free [Groq key](https://console.groq.com) into `backend/.env` as `GROQ_API_KEY`, then run `docker compose restart api worker beat` in the Codespace terminal
+
+> **⚠ Cost caution — read before leaving it running.** GitHub Codespaces gives every **free personal account 120 core-hours/month** (a 4-core machine, which VENOM's 6+ containers realistically need, uses 4 core-hours per real hour — about **30 hours/month free**). If you go over that:
+> - With **no payment method on file, GitHub simply blocks further usage** — it does **not** silently charge you.
+> - If you *do* add a payment method, overage is billed per machine size: **2-core $0.18/hr · 4-core $0.36/hr · 8-core $0.72/hr · 16-core $1.44/hr · 32-core $2.88/hr**, plus **$0.07/GB-month** over the free 15 GB storage.
+> - **Stop or delete the codespace when you're done** (Codespaces tab on GitHub, or it auto-stops after ~30 min idle) so you don't burn your quota for nothing.
+
+This spins up *your own private, isolated* instance — not a shared public server — so there's no risk of other people's scans colliding with yours, and no ongoing cost to the repo owner.
+
+---
+
+## Quick Start — Run It Yourself (5 minutes)
 
 ### Prerequisites
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running
@@ -85,8 +103,6 @@ cp backend/.env.example backend/.env      # Linux / Mac
 
 # 3. Open backend/.env and paste your Groq API key:
 #      GROQ_API_KEY=gsk_your_key_here
-#    Also generate two random secrets (see .env.example instructions):
-#      python -c "import secrets; print(secrets.token_hex(64))"
 
 # 4. Launch everything
 docker compose up --build

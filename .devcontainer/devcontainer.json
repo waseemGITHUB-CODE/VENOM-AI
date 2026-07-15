@@ -1,0 +1,23 @@
+{
+  "name": "VENOM AI",
+  "dockerComposeFile": ["../docker-compose.yml"],
+  "service": "api",
+  "workspaceFolder": "/app",
+  "shutdownAction": "stopCompose",
+
+  "initializeCommand": "cp -n backend/.env.example backend/.env || true",
+
+  "forwardPorts": [3000, 8000],
+  "portsAttributes": {
+    "3000": {
+      "label": "VENOM AI — Web UI",
+      "onAutoForward": "openBrowser"
+    },
+    "8000": {
+      "label": "VENOM AI — API (/api/docs)",
+      "onAutoForward": "notify"
+    }
+  },
+
+  "postStartCommand": "echo 'VENOM AI is starting. Once containers are healthy, open the forwarded port 3000 tab. To enable AI features, paste a free Groq key (console.groq.com) into backend/.env as GROQ_API_KEY, then run: docker compose restart api worker beat'"
+}
