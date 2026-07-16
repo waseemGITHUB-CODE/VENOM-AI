@@ -614,6 +614,8 @@ select.inp option:hover{
   font-size:13.5px;line-height:1.7;
   animation:msg-in 0.3s ease-out forwards;
 }
+.chat-edit-btn{opacity:0;transition:opacity .15s}
+.chat-bubble.user:hover .chat-edit-btn{opacity:1}
 .chat-bubble.user{
   align-self:flex-end;
   background:rgba(57,255,20,0.08);
@@ -6451,22 +6453,52 @@ window.addEventListener('beforeunload', saveChatHistory);
 
 // ── Chat: scroll-to-bottom button ──────────────────────────────────────────
 // Render a user chat bubble WITH an edit button (loads the message back into the
-// input so it can be edited and re-sent). Always visible and placed in normal
-// document flow (not a hover-only absolutely-positioned overlay) so it can't be
-// clipped by the scrollable message list or missed by users on touch devices.
+// input so it can be edited and re-sent). Pencil icon only, hidden until the user
+// hovers the message. Kept in normal document flow (not an absolutely-positioned
+// overlay hanging off the bubble's corner) so opacity toggling can't get clipped
+// by the scrollable message list the way the very first version was. Reveal is
+// driven by direct JS mouseenter/mouseleave handlers on the bubble (not CSS
+// :hover) — the bubble has a CSS entrance animation, and on this page's heavy
+// WebGL background rendering that animation can get stuck in a "running"
+// state, which was found to block hover-triggered CSS cascade updates for its
+// descendants. Toggling inline style directly sidesteps that entirely.
 function _userBubble(text) {
-  return `<div class="chat-bubble user">
+  return `<div class="chat-bubble user" onmouseenter="this.querySelector('.chat-edit-btn').style.opacity='1'" onmouseleave="this.querySelector('.chat-edit-btn').style.opacity='0'">
     <span class="user-msg-text">${escapeHtml(text)}</span>
-    <div style="margin-top:8px;text-align:right">
+    <div class="chat-edit-row" style="margin-top:6px;text-align:right;height:18px">
       <button class="chat-edit-btn" onclick="editUserMessage(this)" title="Edit and re-send this message"
-        style="display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:12px;background:rgba(0,0,0,.15);border:1px solid rgba(57,255,20,.25);color:var(--acid2,#7dffb0);cursor:pointer;font-size:11px;font-family:inherit"
+        style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:rgba(0,0,0,.15);border:1px solid rgba(57,255,20,.25);color:var(--acid2,#7dffb0);cursor:pointer;padding:0;opacity:0;transition:opacity .15s"
         onmouseover="this.style.background='rgba(57,255,20,.12)';this.style.borderColor='rgba(57,255,20,.5)'" onmouseout="this.style.background='rgba(0,0,0,.15)';this.style.borderColor='rgba(57,255,20,.25)'">
         <svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M11.5 2.5l2 2L6 12l-3 1 1-3 7.5-7.5z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
-        Edit
       </button>
     </div>
   </div>`;
 }
+
+// Safety net: force the message entrance animation to its final state once it
+// should be done. Under heavy sustained rendering load (this page runs a
+// continuous WebGL animation for the 3D core), the CSS animation can get stuck
+// mid-run — animationPlayState stays "running" and it never fires 'animationend'
+// — leaving the bubble (and its descendants, like the edit button) stuck at
+// opacity 0. The listener below only helps if the event does eventually fire;
+// this polling sweep guarantees correctness even if it never does.
+document.getElementById('chat-msgs')?.addEventListener('animationend', (e) => {
+  if (e.animationName === 'msg-in') {
+    e.target.style.opacity = '1';
+    e.target.style.transform = 'none';
+  }
+});
+setInterval(() => {
+  const msgs = document.getElementById('chat-msgs');
+  if (!msgs) return;
+  msgs.querySelectorAll('.chat-bubble').forEach(b => {
+    if (getComputedStyle(b).animationPlayState === 'running') {
+      b.style.animation = 'none';
+      b.style.opacity = '1';
+      b.style.transform = 'none';
+    }
+  });
+}, 500);
 
 function editUserMessage(btn) {
   const bubble = btn.closest('.chat-bubble.user');
