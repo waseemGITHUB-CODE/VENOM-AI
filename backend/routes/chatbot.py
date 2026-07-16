@@ -566,6 +566,7 @@ class ChatRequest(BaseModel):
     context: Optional[dict] = None
     stream: bool = False
     voice: bool = False   # true when the message comes from the hands-free voice agent
+    truncate_index: Optional[int] = None  # editing a message: drop history from this point before replying
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -981,6 +982,8 @@ async def chat_message(req: ChatRequest,
     check_chat_quota(current_user)
     session_id = _scoped_session_id(req.session_id, current_user)
     history    = _load_session(session_id)
+    if req.truncate_index is not None:
+        history = history[:max(0, req.truncate_index)]
     # Web search — only when the message actually needs fresh/current info
     search_ctx = ""
     try:
@@ -1077,6 +1080,8 @@ async def chat_stream(req: ChatRequest,
     increment_chat_usage(current_user)
     session_id = _scoped_session_id(req.session_id, current_user)
     history    = _load_session(session_id)
+    if req.truncate_index is not None:
+        history = history[:max(0, req.truncate_index)]
 
     # Web search — only when the message actually needs fresh/current info
     search_ctx = ""

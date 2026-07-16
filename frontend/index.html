@@ -2609,6 +2609,7 @@ let chatHistory = [];
 let attackData = null;
 let _apiOnline = false;
 let _chatSessionId = 'sess-' + Date.now(); // always non-null so saveChatHistory() can always run
+let _pendingTruncateIndex = null; // set by saveEditMessage() right before resubmitting an edited message
 // ── Media upload state ──────────────────────────────────────────
 let _pendingMediaFiles = []; // Array of {name, type, fileType, dataUrl, base64}
 
@@ -6378,9 +6379,9 @@ function loadChatSession(sessionId) {
     _chatSessionId = sessionId;
     chatHistory = s.messages || [];
     const msgsEl = document.getElementById('chat-msgs');
-    msgsEl.innerHTML = chatHistory.map(m =>
+    msgsEl.innerHTML = chatHistory.map((m, i) =>
       m.role === 'user'
-        ? _userBubble(m.content)
+        ? _userBubble(m.content, i)
         : `<div class="chat-bubble ai"><div class="bubble-role">VENOM AI</div>${markdownToHtml(m.content)}</div>`
     ).join('') || `<div class="chat-bubble ai"><div class="bubble-role">VENOM AI · ONLINE</div>Session restored. Continue where you left off.</div>`;
     msgsEl.scrollTop = msgsEl.scrollHeight;
@@ -6462,11 +6463,12 @@ window.addEventListener('beforeunload', saveChatHistory);
 // WebGL background rendering that animation can get stuck in a "running"
 // state, which was found to block hover-triggered CSS cascade updates for its
 // descendants. Toggling inline style directly sidesteps that entirely.
-function _userBubble(text) {
-  return `<div class="chat-bubble user" onmouseenter="this.querySelector('.chat-edit-btn').style.opacity='1'" onmouseleave="this.querySelector('.chat-edit-btn').style.opacity='0'">
+function _userBubble(text, idx) {
+  const idxAttr = (idx === undefined || idx === null) ? '' : ` data-idx="${idx}"`;
+  return `<div class="chat-bubble user"${idxAttr} onmouseenter="this.querySelector('.chat-edit-btn').style.opacity='1'" onmouseleave="this.querySelector('.chat-edit-btn').style.opacity='0'">
     <span class="user-msg-text">${escapeHtml(text)}</span>
     <div class="chat-edit-row" style="margin-top:6px;text-align:right;height:18px">
-      <button class="chat-edit-btn" onclick="editUserMessage(this)" title="Edit and re-send this message"
+      <button class="chat-edit-btn" onclick="startEditMessage(this)" title="Edit and re-send this message"
         style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:rgba(0,0,0,.15);border:1px solid rgba(57,255,20,.25);color:var(--acid2,#7dffb0);cursor:pointer;padding:0;opacity:0;transition:opacity .15s"
         onmouseover="this.style.background='rgba(57,255,20,.12)';this.style.borderColor='rgba(57,255,20,.5)'" onmouseout="this.style.background='rgba(0,0,0,.15)';this.style.borderColor='rgba(57,255,20,.25)'">
         <svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M11.5 2.5l2 2L6 12l-3 1 1-3 7.5-7.5z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
@@ -6500,17 +6502,73 @@ setInterval(() => {
   });
 }, 500);
 
-function editUserMessage(btn) {
+// ── Edit a sent message in place (Claude/ChatGPT style) ─────────────────────
+// Click the pencil -> the message itself becomes an editable textarea, right
+// where it is. Save truncates this message and everything after it (both the
+// visible chat and VENOM's server-side session history), resubmits the edited
+// text as the new message at that position, and gets a fresh reply — exactly
+// as if the conversation had taken that branch instead of the original one.
+function startEditMessage(btn) {
   const bubble = btn.closest('.chat-bubble.user');
-  const span = bubble && bubble.querySelector('.user-msg-text');
-  const text = span ? span.textContent : '';
-  const inp = document.getElementById('chat-inp');
-  if (inp && text) {
-    inp.value = text;
-    inp.focus();
-    try { inp.dispatchEvent(new Event('input')); } catch (_) {}   // resize textarea
-    inp.setSelectionRange(text.length, text.length);
+  if (!bubble || bubble.querySelector('.chat-edit-textarea')) return; // already editing
+  const span = bubble.querySelector('.user-msg-text');
+  const originalText = span ? span.textContent : '';
+  const idx = bubble.dataset.idx !== undefined ? parseInt(bubble.dataset.idx, 10) : null;
+
+  bubble.dataset.origText = originalText;
+  bubble.innerHTML = `
+    <textarea class="chat-edit-textarea" style="width:100%;min-width:280px;background:rgba(0,0,0,.25);border:1px solid rgba(57,255,20,.35);border-radius:8px;color:var(--white);font:inherit;font-size:13.5px;line-height:1.6;padding:8px 10px;resize:none;outline:none" rows="1">${escapeHtml(originalText)}</textarea>
+    <div style="margin-top:8px;display:flex;justify-content:flex-end;gap:8px">
+      <button onclick="cancelEditMessage(this)" style="padding:4px 12px;border-radius:12px;background:none;border:1px solid var(--border);color:var(--muted);cursor:pointer;font-size:11px;font-family:inherit">Cancel</button>
+      <button onclick="saveEditMessage(this, ${idx})" style="padding:4px 12px;border-radius:12px;background:rgba(57,255,20,.15);border:1px solid rgba(57,255,20,.4);color:var(--acid);cursor:pointer;font-size:11px;font-family:inherit;font-weight:600">Save & Submit</button>
+    </div>`;
+
+  const ta = bubble.querySelector('.chat-edit-textarea');
+  const autoResize = () => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; };
+  ta.addEventListener('input', autoResize);
+  autoResize();
+  ta.focus();
+  ta.setSelectionRange(originalText.length, originalText.length);
+  ta.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveEditMessage(ta, idx); }
+    else if (e.key === 'Escape') { e.preventDefault(); cancelEditMessage(ta); }
+  });
+}
+
+function cancelEditMessage(el) {
+  const bubble = el.closest('.chat-bubble.user');
+  if (!bubble) return;
+  const idx = bubble.dataset.idx !== undefined ? parseInt(bubble.dataset.idx, 10) : null;
+  bubble.outerHTML = _userBubble(bubble.dataset.origText || '', idx);
+}
+
+async function saveEditMessage(el, idx) {
+  const bubble = el.closest('.chat-bubble.user');
+  if (!bubble) return;
+  const ta = bubble.querySelector('.chat-edit-textarea');
+  const newText = (ta ? ta.value : '').trim();
+  if (!newText) return;
+  if (idx === null || Number.isNaN(idx)) {
+    // No index available (very old/edge-case bubble) — fall back to the old
+    // behavior of just loading it into the composer instead of resubmitting.
+    const inp = document.getElementById('chat-inp');
+    if (inp) { inp.value = newText; inp.focus(); }
+    bubble.outerHTML = _userBubble(bubble.dataset.origText || newText, idx);
+    return;
   }
+
+  // Drop this message and everything after it, both client-side and the
+  // context VENOM will use to generate the new reply.
+  chatHistory = chatHistory.slice(0, idx);
+  saveChatHistory();
+  let node = bubble;
+  while (node && node.nextSibling) node.parentElement.removeChild(node.nextSibling);
+  bubble.remove();
+
+  _pendingTruncateIndex = idx;
+  const inp = document.getElementById('chat-inp');
+  inp.value = newText;
+  await sendChat();
 }
 
 function chatScrollBottom() {
@@ -6652,7 +6710,7 @@ async function sendChat() {
   }
 
   // ── Regular text chat ─────────────────────────────────────────────────────
-  msgsEl.innerHTML += _userBubble(msg);
+  msgsEl.innerHTML += _userBubble(msg, chatHistory.length);
   const typingId = 'typing-' + Date.now();
   const streamOutId = 'sout-' + typingId;
   msgsEl.innerHTML += `<div class="chat-bubble ai" id="${typingId}"><div class="typing-indicator"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div></div>`;
@@ -6676,6 +6734,8 @@ async function sendChat() {
   let _twPos = 0, _twStreamDone = false, _twTimer = null;
 
   try {
+    const _truncIdx = _pendingTruncateIndex;
+    _pendingTruncateIndex = null; // only applies to this one send
     const r = await fetch(`${API_BASE}/api/chat/stream`, {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
@@ -6683,7 +6743,8 @@ async function sendChat() {
         message: msg,
         session_id: _chatSessionId,
         context: _chatContext(),
-        stream: true
+        stream: true,
+        ...(_truncIdx !== null ? {truncate_index: _truncIdx} : {})
       }),
       signal: _chatAbort.signal,
     });
