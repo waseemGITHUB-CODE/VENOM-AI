@@ -39,7 +39,8 @@ VENOM includes built-in guardrails to help you stay legal:
 | **AI explanations + code fixes** | Every finding gets a plain-English explanation and a working fix in your app's language (Python/JS/PHP/etc.) |
 | **VENOM AI security chat** | Scan-aware cybersecurity assistant — knows your findings, explains vulns, writes payloads, does live web/news search |
 | **Groq + Ollama dual engine** | Groq cloud LLM by default; automatically falls back to a **local Ollama model** when Groq is rate-limited, so chat never stops working |
-| **Tavily AI web search** | Accurate, AI-optimized live web/news search for current CVEs and threat intel (free fallback used if no key) |
+| **Free live web search, always on** | [SearXNG](https://searxng.org) runs as its own container — no API key, no rate limit, aggregates real search engines for current CVEs and news |
+| **Tavily AI web search (optional upgrade)** | Accurate, AI-optimized search with a direct answer, used instead of SearXNG when a key is set |
 | **OWASP ZAP deep scan** | Optional integration with the ZAP daemon for an industry-standard active scan alongside VENOM's own engines |
 | **Hands-free voice agent** | JARVIS-style voice mode — talk to VENOM, it answers aloud with an animated 3D core (Chrome/Edge) |
 | **Attack chain graphs** | Entry point to tools to attacker steps to impact, with MITRE ATT&CK mapping and animated flow |
@@ -123,8 +124,10 @@ That's it. All six services (API, worker, scheduler, Postgres, Redis, frontend) 
 | Key | Required? | Free? | Get it at | Powers |
 |---|---|---|---|---|
 | **Groq** | Required for AI | Yes | [console.groq.com](https://console.groq.com) | Attack planning, explanations, code fixes, chatbot |
-| **Tavily** | Optional | Yes (1k/mo) | [tavily.com](https://tavily.com) | Accurate AI web search for the chatbot |
+| **Tavily** | Optional | Yes (1k/mo) | [tavily.com](https://tavily.com) | Upgrades chat web search to Tavily's AI-ranked results + direct answer |
 | **VirusTotal** | Optional | Yes (500/day) | [virustotal.com](https://virustotal.com) | Threat intel lookups |
+
+> Web search itself needs **no key at all** — a [SearXNG](https://searxng.org) container ships in `docker-compose.yml` and powers chat search by default. Tavily is purely an optional upgrade for more accurate, AI-ranked results.
 
 Full setup instructions for each key are inside [`backend/.env.example`](backend/.env.example).
 
@@ -227,7 +230,7 @@ Browse all models at [console.groq.com/docs/models](https://console.groq.com/doc
                    +--------------+
 ```
 
-**Stack:** FastAPI · Celery · PostgreSQL · Redis · Groq AI · Ollama (local fallback) · Docker · Nginx · Vanilla JS SPA
+**Stack:** FastAPI · Celery · PostgreSQL · Redis · Groq AI · Ollama (local fallback) · SearXNG (free web search) · Docker · Nginx · Vanilla JS SPA
 
 **Scan pipeline:** `Recon -> AI Attack Plan -> Attack Engines (A01-A10) -> Verify -> AI Enrichment -> Risk Scoring -> Attack Chains`
 

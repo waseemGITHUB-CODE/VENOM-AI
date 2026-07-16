@@ -29,10 +29,13 @@ GROQ_URL       = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL     = os.getenv("GROQ_MODEL",      "openai/gpt-oss-20b")
 
 # Tavily — accurate AI-optimized web search. When TAVILY_API_KEY is set it is used
-# as the PRIMARY search source (with a direct answer + ranked results); otherwise
-# VENOM falls back to the free Google News / HackerNews / Wikipedia sources.
+# as the PRIMARY search source (with a direct answer + ranked results). Otherwise
+# VENOM uses SearXNG — a free, self-hosted metasearch engine with no API key and
+# no rate limit (see docker-compose.yml) — then finally the free Google News /
+# HackerNews / Wikipedia sources if even that isn't reachable.
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
 TAVILY_URL     = "https://api.tavily.com/search"
+SEARXNG_URL    = os.getenv("SEARXNG_URL", "http://searxng:8080").rstrip("/")
 
 # ── System prompt — cybersecurity specialist, refuses off-topic ────────────────
 VENOM_SYSTEM_PROMPT = """You are VENOM AI — a specialized cybersecurity AI assistant built into the VENOM platform (Virtual Engine for Network Offensive Monitoring). Created by MD Waseem.
@@ -298,10 +301,36 @@ def _tavily_search(query: str, max_results: int = 5) -> list:
     return out
 
 
+def _searxng_search(query: str, max_results: int = 5) -> list:
+    """Free, self-hosted web search via SearXNG — no API key, no rate limit.
+    Returns [{title,url,snippet}]."""
+    import urllib.request, urllib.parse, json as _json
+    url = f"{SEARXNG_URL}/search?" + urllib.parse.urlencode({
+        "q": query, "format": "json", "safesearch": "1",
+    })
+    req = urllib.request.Request(
+        url, headers={"User-Agent": "Mozilla/5.0 (compatible; VENOM-AI/2.0)"}
+    )
+    with urllib.request.urlopen(req, timeout=8) as r:
+        data = _json.loads(r.read().decode())
+    out = []
+    for item in (data.get("results") or [])[:max_results]:
+        title = (item.get("title") or "").strip()
+        if not title:
+            continue
+        out.append({
+            "title":   title[:140],
+            "url":     item.get("url", ""),
+            "snippet": (item.get("content") or "").strip()[:320],
+        })
+    return out
+
+
 def _web_search(query: str, max_results: int = 5) -> list:
     """
-    Live search. Tavily first (accurate) when a key is set, then the free
-    Google News / HackerNews / Wikipedia sources as automatic fallback.
+    Live search. Tavily first (accurate) when a key is set, then SearXNG
+    (free, self-hosted, no key needed), then the free Google News /
+    HackerNews / Wikipedia sources as a last-resort fallback.
     """
     import urllib.request, urllib.parse, json as _json
 
@@ -313,7 +342,16 @@ def _web_search(query: str, max_results: int = 5) -> list:
                 logger.info(f"[WebSearch] Tavily → {len(tav)} results for '{query[:50]}'")
                 return tav
         except Exception as e:
-            logger.warning(f"[WebSearch] Tavily failed ({e}) — falling back to free sources")
+            logger.warning(f"[WebSearch] Tavily failed ({e}) — trying SearXNG")
+
+    # ── Source 0.5: SearXNG (free, self-hosted, no key) ──
+    try:
+        sx = _searxng_search(query, max_results)
+        if sx:
+            logger.info(f"[WebSearch] SearXNG → {len(sx)} results for '{query[:50]}'")
+            return sx
+    except Exception as e:
+        logger.debug(f"[WebSearch] SearXNG unavailable ({e}) — falling back to free scraping sources")
 
     results = []
     q_enc = urllib.parse.quote_plus(query)

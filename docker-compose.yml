@@ -47,6 +47,21 @@ services:
       timeout: 5s
       retries: 12
 
+  # ── SearXNG — free, self-hosted web search for VENOM AI chat ───────────────
+  # No API key, no rate limit. Used automatically when TAVILY_API_KEY is unset,
+  # and as a fallback if Tavily fails. Not exposed publicly — VENOM's backend
+  # queries it internally over the Docker network.
+  searxng:
+    image: searxng/searxng:latest
+    container_name: cyber_searxng
+    volumes:
+      - ./docker/searxng:/etc/searxng:rw
+    environment:
+      SEARXNG_BASE_URL: http://localhost:8888/
+    ports:
+      - "8888:8080"      # host 8888 → SearXNG UI/API (for debugging; not required)
+    restart: unless-stopped
+
   # ── FastAPI Backend ────────────────────────────────────────────────────────
   api:
     build:
@@ -59,6 +74,7 @@ services:
       ZAP_API_KEY: zap-api-key
       # Reach the user's Ollama running on the HOST machine (fallback when Groq is busy)
       OLLAMA_BASE_URL: http://host.docker.internal:11434
+      SEARXNG_URL: http://searxng:8080
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -85,6 +101,7 @@ services:
       ZAP_API_URL: http://zap:8080
       ZAP_API_KEY: zap-api-key
       OLLAMA_BASE_URL: http://host.docker.internal:11434
+      SEARXNG_URL: http://searxng:8080
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:

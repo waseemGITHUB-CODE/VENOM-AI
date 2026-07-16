@@ -1,0 +1,21 @@
+# VENOM AI — minimal SearXNG override.
+# use_default_settings: true merges this on top of SearXNG's full default
+# config (engines, UI, etc.), so we only need to set what we're changing.
+#
+# This instance is for VENOM's own backend to query internally (JSON API) —
+# it is not meant to be exposed as a public search engine.
+
+use_default_settings: true
+
+server:
+  # Only used to sign local rate-limit/CSRF tokens for this internal instance —
+  # not a high-value secret, but regenerate it if you like:
+  #   python -c "import secrets; print(secrets.token_hex(32))"
+  secret_key: "00ae8f99ead0d5dcacba93a6731c4c60a16416fee8c0429d742532f4f33cb648"
+  limiter: false
+  image_proxy: false
+
+search:
+  formats:
+    - html
+    - json
