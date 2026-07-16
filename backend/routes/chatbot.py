@@ -62,10 +62,23 @@ OFF-TOPIC REFUSAL:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ONLY refuse questions that are genuinely unrelated to security or the user's VENOM work
 — food, recipes, movies, relationships, sports, creative writing, etc. Do NOT refuse
-questions about the user's scans, findings, or what VENOM is doing. When something is
-truly off-topic, refuse briefly:
-"I'm VENOM AI — a specialized cybersecurity assistant. I can help with security, your
-scans, and technical topics. Try asking me about your findings, pen testing, or threats."
+questions about the user's scans, findings, or what VENOM is doing.
+
+NEVER treat a message as off-topic just because it contains a loaded word like "hack",
+"attack", or "exploit", or because it's short/vague ("one hack to try", "show me an
+example", "give me one"). Students, learners, and CTF players asking for a technique,
+an example exploit, or "something to demo" are asking an on-topic, answerable question
+— engage with it directly (e.g. point them at a legal practice target like OWASP Juice
+Shop / DVWA / a VENOM demo target, and walk through a real technique). Do NOT respond
+with a bare, generic "I can't help with that" to anything in your scope above — that
+is a failure to follow these instructions, not a safety measure.
+
+When something is truly off-topic (recipes, movies, etc.), decline briefly but NEVER
+repeat the exact same refusal sentence twice in one conversation — vary the wording
+each time, e.g.:
+- "That's outside what I cover — I'm built for security and technical work. Got a scan, a CVE, or a technique you want to dig into?"
+- "Not really my lane — I'm VENOM's security specialist. Ask me about vulnerabilities, exploits, or your scan results instead."
+- "I'll stay in my area: cybersecurity and technical topics. Happy to help if you've got something security-related."
 
 PERSONALITY:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -629,24 +642,27 @@ def _mark_groq_key_rate_limited(key: str, retry_after_seconds: int = 60):
 
 def _pick_groq_model(message: str) -> str:
     """
-    Use the fast 8B model for simple/casual messages (14,400 req/day free),
-    and the powerful 70B model only for technical/security topics (1,000 req/day free).
-    This gives ~14x more capacity for everyday use.
+    Use the powerful model for anything technical/security-flavored (even short
+    messages — the small fast model is more prone to ignoring VENOM's system
+    prompt and falling back to its own built-in generic refusal on words like
+    "hack"), and the fast 8B model only for genuinely simple/casual chit-chat.
     """
     fast_model = os.getenv("GROQ_MODEL_FAST", "openai/gpt-oss-20b")
     full_model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
     m = message.strip().lower()
 
-    # Short / casual → always use fast model
-    if len(m) < 40:
-        return fast_model
-
-    # Technical keywords → use full model for quality
+    # Technical/security keywords → always use the full model, regardless of
+    # message length. Checked BEFORE the short-message shortcut below, since a
+    # short message like "explain xss" or "one hack to try" is exactly the
+    # case where the small model tends to over-refuse.
     _HEAVY = [
         "exploit", "vulnerability", "cve", "payload", "injection", "xss", "sqli",
         "malware", "ransomware", "pentest", "reverse shell", "privilege", "bypass",
         "shellcode", "buffer overflow", "forensic", "osint", "phishing", "c2",
-        "scan", "security", "hacking", "attack", "firewall", "encrypt", "decrypt",
+        "scan", "security", "hack", "hacking", "hacked", "crack", "cracking",
+        "keylogger", "trojan", "rootkit", "backdoor", "brute force", "bruteforce",
+        "spoof", "sniff", "wifi", "vpn", "tor", "breach", "ddos", "botnet",
+        "attack", "firewall", "encrypt", "decrypt",
         "code", "python", "javascript", "function", "algorithm", "database", "sql",
         "explain", "how does", "what is", "difference between", "compare",
         "analyze", "review", "generate", "write", "create", "implement",
@@ -654,6 +670,8 @@ def _pick_groq_model(message: str) -> str:
     if any(kw in m for kw in _HEAVY):
         return full_model
 
+    # Everything else (short casual chit-chat, or longer messages with no
+    # technical keyword hit) → fast model
     return fast_model
 
 def _groq_model_candidates(message: str) -> list[str]:
@@ -661,6 +679,24 @@ def _groq_model_candidates(message: str) -> list[str]:
     chosen = _pick_groq_model(message)
     fast   = os.getenv("GROQ_MODEL_FAST", "openai/gpt-oss-20b")
     return [chosen] if chosen == fast else [chosen, fast]
+
+# Generic canned refusals the small/fast model sometimes emits on its own
+# (ignoring VENOM's system prompt), independent of what the message was about.
+# Kept short and literal on purpose — this only matches the boilerplate
+# "can't help" phrasing itself, not real declines that engage with the topic.
+_GENERIC_REFUSAL_RE = _re.compile(
+    r"^\s*(i'?m|i am)\s+sorry,?\s+(but\s+)?i\s+(can'?t|cannot|am unable to|won'?t)\s+"
+    r"(help|assist)\b.{0,40}$",
+    _re.IGNORECASE,
+)
+
+def _is_generic_refusal(text: str) -> bool:
+    """True if the reply is (or starts with) a short, boilerplate refusal that
+    didn't actually engage with the question — a sign the small model ignored
+    the system prompt rather than a deliberate on-topic decline."""
+    if not text:
+        return False
+    return bool(_GENERIC_REFUSAL_RE.match(text.strip()))
 
 def _is_rate_limited_error(err: Exception | None) -> bool:
     if not err:
@@ -952,11 +988,24 @@ async def chat_message(req: ChatRequest,
     # ── Groq FIRST (fast, primary) — auto-rotates keys + smart model ──
     if _get_groq_key():
         model_candidates = _groq_model_candidates(req.message)
+        full_model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+        if full_model not in model_candidates:
+            # Emergency retry target: if the chosen (small) model comes back with
+            # a boilerplate refusal instead of engaging, try the smarter model
+            # once before giving up — it's much less prone to that.
+            model_candidates = model_candidates + [full_model]
         for idx, chosen_model in enumerate(model_candidates):
             try:
                 reply = _call_groq_text(messages, chosen_model)
                 if not reply:
                     raise RuntimeError("Groq returned an empty response.")
+                if _is_generic_refusal(reply) and idx < len(model_candidates) - 1:
+                    logger.warning(
+                        f"[Chat] Groq model '{chosen_model}' gave a generic refusal — "
+                        f"retrying with '{model_candidates[idx + 1]}'"
+                    )
+                    reply = ""
+                    continue
                 model_used = f"groq/{chosen_model}"
                 logger.info(f"[Chat] Groq response: session={session_id} model={chosen_model}")
                 break
@@ -1097,6 +1146,9 @@ async def chat_stream(req: ChatRequest,
     groq_key = _get_groq_key()
     if groq_key:
         model_candidates = _groq_model_candidates(req.message)
+        _full_model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+        if _full_model not in model_candidates:
+            model_candidates = model_candidates + [_full_model]
         chosen_model = model_candidates[0]
         accumulated  = []
 
