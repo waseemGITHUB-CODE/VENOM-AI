@@ -3892,8 +3892,30 @@ async function inlineVerifyCheck(domainId) {
 }
 
 async function startOwasp2025Scan(url) {
-  // Single-user / self-hosted: no authorization gate. You scan your own targets.
-  // (The backend forbidden-target blocklist still blocks .gov/.mil/banks/etc.)
+  // The authorization panel above (precheckOwasp2025Authorization) computes
+  // _owasp2025AuthState and shows a verified/demo/localhost/not-verified
+  // message, but previously nothing actually stopped Launch Scan from firing
+  // regardless of what it said — so typing any real domain and clicking
+  // Launch Scan sent real attack payloads at it with no gate at all. This
+  // enforces what the panel already visually promises.
+  const domain = _normalizeDomainJS(url);
+  const authorized = _owasp2025AuthState.domain === domain &&
+    (_owasp2025AuthState.verified || _owasp2025AuthState.demo || _owasp2025AuthState.localhost);
+  if (!authorized) {
+    alert(
+      `Cannot launch an active scan against "${domain}" — it is not a verified domain, ` +
+      `a public demo target, or localhost. Verify ownership first (see the panel above), ` +
+      `or scan http://zero.webappsecurity.com / http://demo.testfire.net / localhost instead.`
+    );
+    return;
+  }
+  const consentBox = document.getElementById('active-consent-check');
+  if (!consentBox || !consentBox.checked) {
+    alert('Please check the authorization box confirming you own this target (or have written permission) before launching an active scan.');
+    consentBox && consentBox.focus();
+    return;
+  }
+
   const btn = document.getElementById('scan-btn');
   btn.disabled = true; btn.textContent = 'Scanning...';
   document.getElementById('stop-scan-btn').style.display = 'inline-flex';
