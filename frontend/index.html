@@ -1200,6 +1200,10 @@ border:1px solid rgba(57,255,20,.15);display:flex;align-items:center;justify-con
     <span class="nav-icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 1L2 4v4c0 3.5 2.7 6.5 6 7 3.3-.5 6-3.5 6-7V4L8 1Z" stroke="currentColor" stroke-width="1.3"/><path d="M6 8l1.5 1.5L10 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
     <span class="nav-label">NHI Scanner</span>
   </button>
+  <button class="nav-item" onclick="showPage('threat',this)">
+    <span class="nav-icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.3"/><path d="M8 5v3.5l2.2 2.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+    <span class="nav-label">Threat Intel</span>
+  </button>
   <button class="nav-item" onclick="showPage('reports',this)">
     <span class="nav-icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M9 1H4a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5L9 1Z" stroke="currentColor" stroke-width="1.3"/><path d="M9 1v4h4M5 8h6M5 11h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></span>
     <span class="nav-label">Reports</span>
@@ -1622,6 +1626,70 @@ border:1px solid rgba(57,255,20,.15);display:flex;align-items:center;justify-con
     <div id="nhi-results">
       <div style="text-align:center;padding:40px;color:var(--muted);font-family:var(--mono);font-size:12px">Enter a target URL to scan for exposed Non-Human Identities...</div>
     </div>
+  </div>
+</div>
+
+<!-- ─── THREAT INTELLIGENCE ─── -->
+<div class="page" id="page-threat">
+  <div class="topbar">
+    <span class="topbar-title">Threat Intelligence</span>
+    <span class="topbar-sub">— VirusTotal &amp; NVD CVE Lookup</span>
+    <div class="topbar-spacer"></div>
+    <span class="topbar-badge danger">LIVE FEEDS</span>
+  </div>
+  <div class="page-body">
+
+    <div class="card" style="margin-bottom:14px">
+      <div class="card-head">
+        <span class="card-title">VirusTotal Reputation Check</span>
+      </div>
+      <div class="input-wrap">
+        <input class="inp" id="vt-target" placeholder="URL, domain, IP, or file hash · try google.com" onkeydown="if(event.key==='Enter')runVTCheck()">
+        <button class="btn btn-primary" id="vt-check-btn" onclick="runVTCheck()">
+          <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M6.5 1L1.5 4v4c0 3 2.2 4.5 5 5 2.8-.5 5-2 5-5V4L6.5 1Z" stroke="currentColor" stroke-width="1.3"/></svg>
+          Check
+        </button>
+      </div>
+      <div style="font-family:var(--mono);font-size:9px;color:var(--muted);line-height:2">
+        Checks 90+ antivirus engines via VirusTotal — accepts a domain, URL, IPv4 address, or MD5/SHA1/SHA256 file hash.
+      </div>
+    </div>
+    <div id="vt-results" style="margin-bottom:22px">
+      <div style="text-align:center;padding:24px;color:var(--muted);font-family:var(--mono);font-size:12px">Enter a target above to check its reputation...</div>
+    </div>
+
+    <div class="card" style="margin-bottom:14px">
+      <div class="card-head">
+        <span class="card-title">CVE Lookup &amp; Search</span>
+      </div>
+      <div class="input-wrap">
+        <input class="inp" id="cve-lookup-id" placeholder="CVE ID · e.g. CVE-2024-3094" onkeydown="if(event.key==='Enter')runCVELookup()">
+        <button class="btn btn-ghost" onclick="runCVELookup()">Lookup</button>
+      </div>
+      <div class="input-wrap" style="margin-top:8px">
+        <input class="inp" id="cve-search-q" placeholder="Search by keyword · e.g. log4j, wordpress, buffer overflow" onkeydown="if(event.key==='Enter')runCVESearch()">
+        <button class="btn btn-ghost" onclick="runCVESearch()">Search</button>
+      </div>
+    </div>
+    <div id="cve-lookup-results"></div>
+
+    <div class="card" style="margin-bottom:14px">
+      <div class="card-head">
+        <span class="card-title">Recent CVEs</span>
+        <select class="inp" id="cve-recent-severity" style="max-width:160px;margin-left:auto">
+          <option value="">All Severities</option>
+          <option value="CRITICAL">Critical</option>
+          <option value="HIGH">High</option>
+          <option value="MEDIUM">Medium</option>
+          <option value="LOW">Low</option>
+        </select>
+        <button class="btn btn-ghost btn-sm" onclick="loadRecentCVEs()">↻ Load</button>
+      </div>
+    </div>
+    <div id="cve-recent-results">
+      <div style="text-align:center;padding:24px;color:var(--muted);font-family:var(--mono);font-size:12px">Click "Load" to fetch recently published CVEs (last 30 days)...</div>
+    </div>
+
   </div>
 </div>
 
@@ -6246,6 +6314,147 @@ async function runNHIScan() {
         </div>
       </div>`;
     if (btn) { btn.disabled = false; btn.textContent = 'Scan NHI'; }
+  }
+}
+
+// ── Threat Intelligence: VirusTotal + NVD CVE ───────────────────────────────
+function _tiErrorCard(msg) {
+  return `<div class="card" style="text-align:center;padding:20px">
+    <div style="font-family:var(--mono);font-size:12px;color:var(--red)">${escapeHtml(msg)}</div>
+  </div>`;
+}
+
+function _tiSeverityColor(sev) {
+  const s = (sev || '').toUpperCase();
+  if (s === 'CRITICAL') return 'var(--red)';
+  if (s === 'HIGH') return '#ff8c42';
+  if (s === 'MEDIUM') return '#e8d44d';
+  if (s === 'LOW') return 'var(--acid2)';
+  return 'var(--muted)';
+}
+
+async function runVTCheck() {
+  const target = document.getElementById('vt-target').value.trim();
+  const el = document.getElementById('vt-results');
+  const btn = document.getElementById('vt-check-btn');
+  if (!target) { el.innerHTML = _tiErrorCard('Enter a URL, domain, IP, or file hash first.'); return; }
+  btn.disabled = true; btn.textContent = 'Checking...';
+  el.innerHTML = `<div style="text-align:center;padding:24px;color:var(--muted);font-family:var(--mono);font-size:12px">Querying VirusTotal...</div>`;
+  try {
+    const r = await fetch(`${API_BASE}/api/threat/vt/check`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({target})
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'VirusTotal check failed');
+    const verdictColor = d.malicious > 0 ? 'var(--red)' : (d.suspicious > 0 ? '#ff8c42' : 'var(--acid2)');
+    const verdictLabel = d.malicious > 0 ? 'MALICIOUS' : (d.suspicious > 0 ? 'SUSPICIOUS' : 'CLEAN');
+    el.innerHTML = `
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:14px;margin-bottom:16px;flex-wrap:wrap">
+          <div style="font-family:var(--head);font-size:22px;font-weight:800;color:${verdictColor}">${verdictLabel}</div>
+          <div style="font-family:var(--mono);font-size:11px;color:var(--muted)">${escapeHtml(d.target || target)} · ${escapeHtml(d.type || '')}</div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-bottom:14px">
+          <div style="text-align:center;padding:10px;background:rgba(255,59,59,.06);border:1px solid rgba(255,59,59,.2);border-radius:8px">
+            <div style="font-size:20px;font-weight:800;color:var(--red)">${d.malicious ?? 0}</div>
+            <div style="font-size:9px;font-family:var(--mono);color:var(--muted)">MALICIOUS</div>
+          </div>
+          <div style="text-align:center;padding:10px;background:rgba(255,140,66,.06);border:1px solid rgba(255,140,66,.2);border-radius:8px">
+            <div style="font-size:20px;font-weight:800;color:#ff8c42">${d.suspicious ?? 0}</div>
+            <div style="font-size:9px;font-family:var(--mono);color:var(--muted)">SUSPICIOUS</div>
+          </div>
+          <div style="text-align:center;padding:10px;background:rgba(57,255,20,.06);border:1px solid rgba(57,255,20,.2);border-radius:8px">
+            <div style="font-size:20px;font-weight:800;color:var(--acid2)">${d.harmless ?? 0}</div>
+            <div style="font-size:9px;font-family:var(--mono);color:var(--muted)">HARMLESS</div>
+          </div>
+          <div style="text-align:center;padding:10px;background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:8px">
+            <div style="font-size:20px;font-weight:800;color:var(--text)">${d.undetected ?? 0}</div>
+            <div style="font-size:9px;font-family:var(--mono);color:var(--muted)">UNDETECTED</div>
+          </div>
+        </div>
+        <div style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-bottom:10px">
+          Detection rate: <span style="color:var(--text)">${escapeHtml(d.detection_rate || '')}</span> across ${d.total_engines ?? '?'} engines
+          ${d.reputation !== undefined ? ` · Reputation score: <span style="color:var(--text)">${d.reputation}</span>` : ''}
+        </div>
+        ${(d.tags && d.tags.length) ? `<div style="margin-bottom:10px">${d.tags.map(t=>`<span style="display:inline-block;margin:2px;padding:2px 8px;border-radius:10px;background:rgba(255,255,255,.05);border:1px solid var(--border);font-family:var(--mono);font-size:10px;color:var(--muted)">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
+        ${(d.detections && d.detections.length) ? `
+          <div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-bottom:6px">FLAGGED BY:</div>
+          <div style="font-size:11px;line-height:1.8">${d.detections.map(x=>escapeHtml(typeof x === 'string' ? x : JSON.stringify(x))).join(', ')}</div>
+        ` : ''}
+        ${d.registrar ? `<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);font-family:var(--mono);font-size:10px;color:var(--muted)">
+          Registrar: <span style="color:var(--text)">${escapeHtml(d.registrar)}</span>
+          ${d.creation_date ? ` · Registered: <span style="color:var(--text)">${new Date(d.creation_date*1000).toLocaleDateString()}</span>` : ''}
+        </div>` : ''}
+      </div>`;
+  } catch (e) {
+    el.innerHTML = _tiErrorCard(e.message || 'VirusTotal check failed');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Check';
+  }
+}
+
+function _renderCveCard(c) {
+  if (c.error) return _tiErrorCard(c.error);
+  return `<div class="card" style="margin-bottom:10px">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+      <span style="font-family:var(--mono);font-weight:700;font-size:13px;color:var(--acid)">${escapeHtml(c.cve_id || '')}</span>
+      ${c.cvss_severity ? `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-family:var(--mono);font-size:10px;font-weight:700;background:${_tiSeverityColor(c.cvss_severity)}22;color:${_tiSeverityColor(c.cvss_severity)};border:1px solid ${_tiSeverityColor(c.cvss_severity)}55">${escapeHtml(c.cvss_severity)}${c.cvss_score ? ' · ' + c.cvss_score : ''}</span>` : ''}
+      ${c.published ? `<span style="margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--muted)">${escapeHtml(c.published)}</span>` : ''}
+    </div>
+    <div style="font-size:12.5px;line-height:1.6;color:var(--text);margin-bottom:8px">${escapeHtml(c.description || '')}</div>
+    ${(c.weaknesses && c.weaknesses.length) ? `<div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-bottom:6px">${c.weaknesses.map(escapeHtml).join(' · ')}</div>` : ''}
+    ${(c.references && c.references.length) ? `<div style="font-family:var(--mono);font-size:10px"><a href="${escapeHtml(c.references[0])}" target="_blank" rel="noopener" style="color:var(--cyan)">${escapeHtml(c.references[0])}</a></div>` : ''}
+  </div>`;
+}
+
+async function runCVELookup() {
+  const id = document.getElementById('cve-lookup-id').value.trim();
+  const el = document.getElementById('cve-lookup-results');
+  if (!id) { el.innerHTML = _tiErrorCard('Enter a CVE ID first, e.g. CVE-2024-3094'); return; }
+  el.innerHTML = `<div style="text-align:center;padding:20px;color:var(--muted);font-family:var(--mono);font-size:12px">Looking up ${escapeHtml(id)}...</div>`;
+  try {
+    const r = await fetch(`${API_BASE}/api/threat/cve/${encodeURIComponent(id)}`);
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'CVE lookup failed');
+    el.innerHTML = _renderCveCard(d);
+  } catch (e) {
+    el.innerHTML = _tiErrorCard(e.message || 'CVE lookup failed');
+  }
+}
+
+async function runCVESearch() {
+  const q = document.getElementById('cve-search-q').value.trim();
+  const el = document.getElementById('cve-lookup-results');
+  if (!q) { el.innerHTML = _tiErrorCard('Enter a search keyword first, e.g. log4j'); return; }
+  el.innerHTML = `<div style="text-align:center;padding:20px;color:var(--muted);font-family:var(--mono);font-size:12px">Searching NVD for "${escapeHtml(q)}"...</div>`;
+  try {
+    const r = await fetch(`${API_BASE}/api/threat/cve/search?q=${encodeURIComponent(q)}&limit=10`);
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'CVE search failed');
+    const results = d.results || [];
+    el.innerHTML = results.length
+      ? results.map(_renderCveCard).join('')
+      : `<div style="text-align:center;padding:20px;color:var(--muted);font-family:var(--mono);font-size:12px">No CVEs found for "${escapeHtml(q)}"</div>`;
+  } catch (e) {
+    el.innerHTML = _tiErrorCard(e.message || 'CVE search failed');
+  }
+}
+
+async function loadRecentCVEs() {
+  const sev = document.getElementById('cve-recent-severity').value;
+  const el = document.getElementById('cve-recent-results');
+  el.innerHTML = `<div style="text-align:center;padding:20px;color:var(--muted);font-family:var(--mono);font-size:12px">Loading recent CVEs...</div>`;
+  try {
+    const r = await fetch(`${API_BASE}/api/threat/cve/recent?limit=10${sev ? '&severity=' + sev : ''}`);
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Failed to load recent CVEs');
+    const results = d.results || [];
+    el.innerHTML = results.length
+      ? results.map(_renderCveCard).join('')
+      : `<div style="text-align:center;padding:20px;color:var(--muted);font-family:var(--mono);font-size:12px">No recent CVEs found for that filter.</div>`;
+  } catch (e) {
+    el.innerHTML = _tiErrorCard(e.message || 'Failed to load recent CVEs');
   }
 }
 
