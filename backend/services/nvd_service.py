@@ -7,6 +7,7 @@ import json
 import logging
 import urllib.parse
 import urllib.request
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 logger = logging.getLogger("venom.nvd")
@@ -94,14 +95,26 @@ def search_cves(keyword: str, limit: int = 10) -> list[dict]:
 
 
 def recent_cves(limit: int = 10, severity: Optional[str] = None) -> list[dict]:
-    """Get recently published CVEs, optionally filtered by severity."""
-    params: dict = {"resultsPerPage": min(limit, 20), "sortBy": "published", "sortOrder": "dsc"}
+    """Get recently published CVEs, optionally filtered by severity.
+
+    NVD API 2.0 has no "sort by newest" parameter — recency has to come from
+    a pubStartDate/pubEndDate window instead (both required together, ISO-8601
+    with milliseconds, max 120-day range). Results within that window come
+    back newest-last, so we reverse them.
+    """
+    now = datetime.now(timezone.utc)
+    start = now - timedelta(days=30)
+    params: dict = {
+        "resultsPerPage": min(limit, 20),
+        "pubStartDate": start.strftime("%Y-%m-%dT%H:%M:%S.000"),
+        "pubEndDate":   now.strftime("%Y-%m-%dT%H:%M:%S.000"),
+    }
     if severity:
         params["cvssV3Severity"] = severity.upper()
     try:
         data = _nvd_get(params)
         vulns = data.get("vulnerabilities", [])
-        return [_parse_cve(v) for v in vulns]
+        return [_parse_cve(v) for v in reversed(vulns)]
     except Exception as e:
         logger.error(f"NVD recent CVEs failed: {e}")
         raise

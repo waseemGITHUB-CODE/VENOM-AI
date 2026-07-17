@@ -27,15 +27,6 @@ async def virustotal_check(req: VTRequest):
         raise HTTPException(500, f"VirusTotal error: {e}")
 
 
-@router.get("/cve/{cve_id}")
-async def cve_lookup(cve_id: str):
-    try:
-        from services.nvd_service import lookup_cve
-        return lookup_cve(cve_id)
-    except Exception as e:
-        raise HTTPException(500, f"NVD error: {e}")
-
-
 @router.get("/cve/search")
 async def cve_search(
     q: str = Query(..., description="Keyword to search (product, vendor, vuln type)"),
@@ -56,5 +47,18 @@ async def cve_recent(
     try:
         from services.nvd_service import recent_cves
         return {"results": recent_cves(limit, severity)}
+    except Exception as e:
+        raise HTTPException(500, f"NVD error: {e}")
+
+
+# NOTE: this path-param route MUST stay below /cve/search and /cve/recent —
+# otherwise those literal segments get captured here as cve_id="search" /
+# "recent" (FastAPI matches routes in registration order), which NVD then
+# 404s on as an invalid CVE ID.
+@router.get("/cve/{cve_id}")
+async def cve_lookup(cve_id: str):
+    try:
+        from services.nvd_service import lookup_cve
+        return lookup_cve(cve_id)
     except Exception as e:
         raise HTTPException(500, f"NVD error: {e}")
