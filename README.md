@@ -163,41 +163,87 @@ Ollama is **optional and only used as a fallback** — Groq stays primary becaus
 ## How to Use
 
 ### 1. Open VENOM
-Open http://localhost:3000 — it opens **straight to the dashboard**. VENOM is single-user by design — no login, no signup, no accounts — just like running OWASP ZAP or Burp on your own machine.
+Open http://localhost:3000 (or the forwarded port-3000 tab if you're in a Codespace — see [Using VENOM inside a Codespace](#using-venom-inside-a-codespace) below). It opens **straight to the dashboard**. VENOM is single-user by design — no login, no signup, no accounts — just like running OWASP ZAP or Burp on your own machine.
 
 > Want the extra consent/domain-verification/scan-limit safety gates even on a single-operator install? Set `SINGLE_USER_MODE=false` in `backend/.env`.
 
-### 2. Verify a domain you own
-Before you can run an **active** scan on your own site, prove you own it:
-- Go to the **Scanner** page and pick **"OWASP 2025 Active Scan"**
-- Enter your URL — the authorization panel guides you through verification
-- Pick any ONE method: DNS TXT record, upload a file, `.well-known` file, or a `<meta>` tag
-- Click **Verify** — done
+The sidebar has every feature. Here's each one:
 
-> **No domain?** You can scan public demo targets (like `http://zero.webappsecurity.com` or `http://demo.testfire.net`) or anything on `localhost` **without** verification — these are legal to test.
+### 2. Dashboard
+The landing page — total scans run, average security score, open vulnerabilities, a critical/high count, your most recent scans, and a severity breakdown. Empty until you run your first scan.
 
-### 3. Run a scan
-- Tick the consent box (confirming you're authorized)
-- Click **Launch Scan**
-- Watch each OWASP engine run live (Recon to AI Plan to A01...A05 to Verify to Risk)
+### 3. Scanner — the main scanning page
+Enter a target URL and pick a scan type from the dropdown:
 
-### 4. Review findings
-Results are split into:
+| Scan type | What it does |
+|---|---|
+| **⚡ OWASP Scanner** (`owasp2025`) | The real deal — active scanning, sends actual attack payloads (SQLi, XSS, command injection, etc.) across all 10 OWASP Top 10:2025 categories. **Requires authorization** (see step 4). |
+| **Full Scan (Passive)** | Headers, SSL/TLS config, open ports (Nmap), tech fingerprinting — no attack payloads sent. |
+| **Quick Scan** | A faster, lighter version of the full scan. |
+| **Web App** | Focused on web-application-layer checks. |
+| **Infrastructure** | Focused on network/port/service-level checks. |
+| **Recon Only** | Just the crawler — discovers pages, forms, endpoints, tech stack. No testing at all. |
+
+Only **OWASP Scanner** sends real attack traffic and requires the authorization step below — the other five are passive/read-only and can be pointed at anything without special authorization (they still shouldn't be run against systems you don't have permission to probe, but they don't send exploit payloads).
+
+### 4. Authorize a target before an active (OWASP) scan
+Pick **OWASP Scanner** and enter a URL — an authorization panel appears automatically and checks the domain:
+- **Localhost / private IP** → allowed instantly, no verification needed
+- **Public demo target** (`zero.webappsecurity.com`, `demo.testfire.net`, OWASP Juice Shop, DVWA, badssl.com, httpbin.org, etc.) → allowed instantly
+- **Anything else** → shows "not yet verified" and an inline verification flow: pick ONE of DNS TXT record / file upload / `.well-known` file / `<meta>` tag, then click **Verify**
+
+Either way, you must also tick **"I confirm I own this target or have written authorization to scan it"** — both the authorization check and the consent checkbox are enforced; **Launch Scan is blocked without both**, no matter what you type as the target.
+
+### 5. Run the scan
+Click **Launch Scan**. For OWASP scans you'll see each stage light up live: Recon → AI Attack Planning → A01…A10 → Verify Findings → Risk Matrix Scoring. Click **■ Stop Scan** any time to cancel.
+
+### 6. Review findings
+Results split into:
 - **Vulnerabilities** — real, exploitable issues (with the payload that worked)
 - **Hardening** — best-practice improvements
 
-Each vulnerability includes:
-- **AI explanation** in plain English
-- **AI code fix** in your app's language (copy-paste ready)
-- **Attack chain** — how an attacker would exploit it, step by step, with tools + MITRE technique
+Each vulnerability includes an **AI explanation** in plain English, an **AI code fix** in your app's language (copy-paste ready), and — for OWASP scans — a place in the **Attack Chain Graph**.
 
-### 5. (Optional) Monitor continuously
-Add a target to **Continuous Monitoring** to re-scan it on a schedule and get alerted when its security posture changes.
+### 7. Attack Chain Graph
+Pick a completed scan from the dropdown (works for OWASP, quick, full, webapp, and infra scans) to see how its individual findings could be chained together by a real attacker to reach a critical asset — entry point → tools used → attacker steps → impact, mapped to MITRE ATT&CK techniques and tactics.
 
-### 6. Ask VENOM AI (chat + voice)
-Open **VENOM AI Chat** for a scan-aware security assistant — it knows your latest findings, explains vulnerabilities, writes payloads, and does live web/news search for current CVEs.
-- **Voice mode:** click the mic (Chrome/Edge) for a hands-free JARVIS-style conversation — VENOM listens continuously, answers aloud in a deep voice, and shows an animated 3D core. Click **End** to stop.
-- **Edit a message:** hover any message you sent and click the pencil to load it back into the input, tweak it, and re-send.
+### 8. Compliance
+Maps your scan findings onto **ISO 27001**, **SOC 2 Type II**, and **GDPR** controls — shows a compliance score per framework and exactly which findings are blocking which control. Needs at least one completed scan first.
+
+### 9. NHI Scanner (Non-Human Identity)
+A separate, fast, standalone check for leaked secrets in a site's public HTML/JS: AWS keys, GitHub tokens, Stripe/Google/Slack API keys, JWT secrets, SSH keys, database connection strings, and "shadow AI" tokens. Just enter a URL and click **Scan NHI** — no authorization gate, since it's read-only (fetches public pages and pattern-matches, sends no attack payloads).
+
+### 10. Threat Intel
+Three independent lookup tools against public databases — **nothing here touches the target's servers**, so it's safe to check any domain/IP/hash/CVE, including ones you don't own:
+- **VirusTotal check** — paste a URL, domain, IP, or file hash; get a malicious/suspicious/harmless/undetected breakdown from 90+ antivirus engines, a reputation score, tags, and (for domains) registrar/WHOIS info. Requires `VIRUSTOTAL_API_KEY` in `.env` (free, 500 lookups/day).
+- **CVE lookup** — type an exact CVE ID (e.g. `CVE-2024-3094`) to get its full record: description, CVSS score/severity, weaknesses, references.
+- **CVE search** — type a keyword (a product, vendor, or vuln type like `wordpress` or `log4j`) to find matching CVEs. No key needed — both CVE features query NIST's public NVD database directly.
+- **Recent CVEs** — pulls CVEs published in the last 30 days, optionally filtered by severity (Critical/High/Medium/Low).
+
+### 11. Reports
+Every completed scan can generate a PDF: executive summary, full vulnerability detail, and a remediation roadmap. **Generate Consolidated PDF** (top right) bundles every completed scan you have into one report — a cover page, a portfolio table, and one section per scan.
+
+### 12. Continuous Monitoring
+Add a target + interval (5 min / 30 min / hourly / daily / weekly) to re-scan it automatically. Turn on **"Alert on score drop"** and/or **"Alert on new vulns"**, and optionally **Enable Alerts** for desktop notifications. Every alert also lands in the **Alert History** list on the same page.
+
+### 13. VENOM AI Chat (+ voice)
+A scan-aware security assistant — it knows your latest findings and can explain vulnerabilities, write payloads/PoCs, walk through exploitation techniques on legal practice targets, and pull live CVE/news data via web search (SearXNG by default, no key needed — or Tavily if you've set `TAVILY_API_KEY` for more accurate results).
+- **Voice mode** (Chrome/Edge): click the mic for a hands-free, JARVIS-style conversation — VENOM listens continuously and answers aloud with an animated 3D core. Click **End** to stop.
+- **Edit a message**: every message you've sent shows a small pencil icon underneath it — click it to turn that message into an editable box in place, edit the text, then **Save & Submit**. This removes that message and everything after it (both on screen and from VENOM's memory of the conversation) and gets a fresh reply, exactly like editing a message in Claude or ChatGPT — it's not just "load it back into the input box."
+
+### 14. Clear All Data
+Bottom of the sidebar — wipes all scans, findings, and chat history for a completely fresh start. There's no undo.
+
+---
+
+## Using VENOM inside a Codespace
+
+Everything above works identically in a Codespace — a few things are just worth knowing:
+
+- **"localhost" means the Codespace's own container**, not your laptop. If you want to actively scan something local for testing, run it *inside* the Codespace terminal (e.g. `docker run -d -p 3000:3000 bkimminich/juice-shop` in the Codespace's own terminal), not on your physical machine.
+- **AI chat needs your own Groq key** — paste one into `backend/.env` as `GROQ_API_KEY` (see [Try VENOM Live](#try-venom-live-no-install) above), then `docker compose restart api worker beat` from the Codespace terminal. Web search (SearXNG) and the scanner itself work with zero setup either way.
+- **Ollama local-fallback won't work in a Codespace** — it needs a model running on your own physical machine, which a cloud Codespace can't reach. Not a problem in practice since Groq stays primary and each Codespace user has their own free Groq key/quota anyway.
+- **Every visitor's Codespace is fully private and independent** — nobody shares scans, chat history, or quota with anyone else. See the cost caution in [Try VENOM Live](#try-venom-live-no-install) for what happens if you go over the free monthly hours.
 
 ---
 
