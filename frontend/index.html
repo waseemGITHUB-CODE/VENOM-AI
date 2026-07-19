@@ -1751,6 +1751,19 @@ border:1px solid rgba(57,255,20,.15);display:flex;align-items:center;justify-con
   </div>
   <div class="page-body">
 
+    <!-- LIVE 3D MONITORING VISUALISATION (only shown while ≥1 target is active) -->
+    <div id="mon-viz-card" class="card" style="display:none;margin-bottom:18px;position:relative;overflow:hidden;padding:0;
+         background:radial-gradient(circle at 50% 120%, rgba(57,255,20,.06), transparent 60%), var(--card)">
+      <canvas id="mon-viz-canvas" style="width:100%;height:230px;display:block"></canvas>
+      <div style="position:absolute;top:14px;left:18px;pointer-events:none">
+        <div style="font-family:var(--head);font-size:13px;font-weight:700;color:var(--acid);letter-spacing:.06em;display:flex;align-items:center;gap:7px">
+          <span style="width:8px;height:8px;border-radius:50%;background:var(--acid);box-shadow:0 0 8px var(--acid);animation:venom-pulse 1.4s ease-in-out infinite"></span>
+          LIVE MONITORING
+        </div>
+        <div id="mon-viz-sub" style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:4px">Initialising sensor grid…</div>
+      </div>
+    </div>
+
     <!-- ADD TARGET CARD -->
     <div class="card" style="margin-bottom:18px">
       <div class="card-header">
@@ -2986,8 +2999,15 @@ async function monRefresh() {
     _renderAlerts(aData.alerts || [], aData.unread || 0);
 
     // Update status pill
+    const active = mData.active || 0;
     const pill = document.getElementById('mon-status-pill');
-    if (pill) pill.textContent = `● ${mData.active || 0} ACTIVE`;
+    if (pill) pill.textContent = `● ${active} ACTIVE`;
+
+    // Drive the live 3D visualisation — runs only while monitoring is active
+    // AND the monitoring page is open (RAF is stopped otherwise).
+    const onMonPage = document.getElementById('page-monitoring').classList.contains('active');
+    if (active > 0 && onMonPage) MonitorViz.start(active);
+    else MonitorViz.stop();
 
     // Update nav badge
     const badge = document.getElementById('monitor-alert-badge');
@@ -3293,12 +3313,144 @@ function showPage(id, btn) {
   if (id === 'scanner') loadHistory();
   if (id === 'reports') loadReportsList();
   if (id === 'monitoring') { applyPlanGates(); if (_planAllowsMonitoring(window._userBilling)) { monRefresh(); _monStartHeartbeat(); _updateNotifBtn(); monLoadEmailSettings(); } }
+  else { try { MonitorViz.stop(); } catch (_) {} }   // pause the 3D viz when off the monitoring page
   if (id === 'chat') { applyPlanGates(); if (_planAllowsChat(window._userBilling)) renderChatSidebar(); }
   if (id === 'pricing') loadPricingPage();
   if (id === 'about') loadAboutPage();
   if (id === 'profile') loadProfilePage();
   if (id === 'billing') loadBillingPage();
 }
+
+// ─── Continuous-Monitoring 3D visualisation ─────────────────────────────────
+// A self-contained canvas render (no external libs): a rotating wireframe
+// globe with a radar sweep, expanding pulse rings, and one orbiting satellite
+// node per active monitor target. Shown only while ≥1 target is being watched;
+// the RAF loop is stopped whenever monitoring goes idle or the page is left,
+// so it costs nothing when not visible.
+const MonitorViz = (function () {
+  // setInterval-driven (see _scanBar note) so it animates even when the
+  // browser pane isn't the focused tab.
+  const TICK_MS = 33;
+  let canvas = null, ctx = null, timer = null, t = 0, W = 0, H = 0, count = 0;
+  const ACID = '57,255,20', CYAN = '79,195,247';
+
+  (function injectKeyframes() {
+    const s = document.createElement('style');
+    s.textContent = '@keyframes venom-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.7)}}';
+    document.head.appendChild(s);
+  })();
+
+  function syncSize() {
+    const rect = canvas.getBoundingClientRect();
+    if (Math.abs(rect.width - W) < 1 && Math.abs(rect.height - H) < 1 && canvas.width) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = rect.width; H = rect.height;
+    canvas.width = W * dpr; canvas.height = H * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  function rotY(x, z, a) { const c = Math.cos(a), s = Math.sin(a); return [x * c - z * s, x * s + z * c]; }
+  function proj(x, y, z, cx, cy) { const p = 300 / (300 + z); return [cx + x * p, cy + y * p, p]; }
+
+  function draw() {
+    syncSize();
+    t += 0.012;
+    ctx.clearRect(0, 0, W, H);
+    const cx = W / 2, cy = H / 2, R = Math.min(W, H) * 0.34, ay = t * 0.5;
+
+    // Core glow
+    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, R * 0.9);
+    g.addColorStop(0, `rgba(${ACID},0.18)`); g.addColorStop(1, `rgba(${ACID},0)`);
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, R * 0.9, 0, 7); ctx.fill();
+
+    // Latitude rings
+    for (let lat = -60; lat <= 60; lat += 30) {
+      const rl = Math.cos(lat * Math.PI / 180) * R, yl = Math.sin(lat * Math.PI / 180) * R;
+      ctx.beginPath();
+      for (let lon = 0; lon <= 360; lon += 12) {
+        const a = lon * Math.PI / 180, [xr, zr] = rotY(Math.cos(a) * rl, Math.sin(a) * rl, ay);
+        const [px, py] = proj(xr, yl, zr, cx, cy);
+        lon ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+      }
+      ctx.strokeStyle = `rgba(${ACID},0.13)`; ctx.lineWidth = 1; ctx.stroke();
+    }
+    // Longitude arcs
+    for (let lon = 0; lon < 180; lon += 30) {
+      ctx.beginPath();
+      for (let lat = -90; lat <= 90; lat += 10) {
+        const rl = Math.cos(lat * Math.PI / 180) * R, yl = Math.sin(lat * Math.PI / 180) * R;
+        const a = lon * Math.PI / 180, [xr, zr] = rotY(Math.cos(a) * rl, Math.sin(a) * rl, ay);
+        const [px, py] = proj(xr, yl, zr, cx, cy);
+        lat === -90 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      }
+      ctx.strokeStyle = `rgba(${ACID},0.10)`; ctx.lineWidth = 1; ctx.stroke();
+    }
+
+    // Expanding pulse rings
+    for (let k = 0; k < 3; k++) {
+      const pr = ((t * 26 + k * (R / 3 * 2)) % (R * 2));
+      if (pr <= R * 2) {
+        ctx.beginPath(); ctx.arc(cx, cy, pr / 2, 0, 7);
+        ctx.strokeStyle = `rgba(${ACID},${0.22 * (1 - pr / (R * 2))})`; ctx.lineWidth = 1.4; ctx.stroke();
+      }
+    }
+
+    // Radar sweep
+    const sweep = (t * 1.3) % (Math.PI * 2);
+    const sg = ctx.createLinearGradient(cx, cy, cx + Math.cos(sweep) * R, cy + Math.sin(sweep) * R);
+    sg.addColorStop(0, `rgba(${ACID},0.4)`); sg.addColorStop(1, `rgba(${ACID},0)`);
+    ctx.strokeStyle = sg; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(sweep) * R, cy + Math.sin(sweep) * R); ctx.stroke();
+
+    // Orbiting satellite nodes — one per active target (min 3 for a lively look)
+    const n = Math.max(count, 3);
+    const nodes = [];
+    for (let i = 0; i < n; i++) {
+      const phase = t * 0.85 + i * (Math.PI * 2 / n);
+      const incl = ((i % 3) - 1) * 0.55, orb = R * 1.4;
+      const [xr, zr] = rotY(Math.cos(phase) * orb, Math.sin(phase) * orb, ay);
+      const y = Math.sin(phase) * orb * Math.sin(incl);
+      const [px, py, p] = proj(xr, y, zr, cx, cy);
+      nodes.push({ px, py, p, real: i < count });
+    }
+    nodes.sort((a, b) => a.p - b.p);  // draw far→near
+    nodes.forEach(nd => {
+      const col = nd.real ? ACID : CYAN;
+      ctx.beginPath(); ctx.arc(nd.px, nd.py, 2 + nd.p * 2.6, 0, 7);
+      ctx.fillStyle = `rgba(${col},${0.4 + nd.p * 0.5})`;
+      ctx.shadowColor = `rgba(${col},0.9)`; ctx.shadowBlur = 9;
+      ctx.fill(); ctx.shadowBlur = 0;
+    });
+  }
+
+  function subText() {
+    const sub = document.getElementById('mon-viz-sub');
+    if (sub) sub.textContent = count > 0
+      ? `Scanning ${count} target${count === 1 ? '' : 's'} in real time…`
+      : 'Standing by…';
+  }
+
+  return {
+    start(activeCount) {
+      count = activeCount || 0;
+      const card = document.getElementById('mon-viz-card');
+      canvas = document.getElementById('mon-viz-canvas');
+      if (!card || !canvas) return;
+      card.style.display = 'block';
+      ctx = ctx || canvas.getContext('2d');
+      subText();
+      syncSize();
+      draw();  // paint one frame immediately
+      if (!timer) timer = setInterval(draw, TICK_MS);
+    },
+    setCount(activeCount) { count = activeCount || 0; subText(); },
+    stop() {
+      if (timer) { clearInterval(timer); timer = null; }
+      const card = document.getElementById('mon-viz-card');
+      if (card) card.style.display = 'none';
+    },
+  };
+})();
 
 // ── STATUS CHECK ─────────────────────────────────────────────────
 async function checkStatus() {
@@ -4098,9 +4250,59 @@ function _o2025_computeStageStates(status, currentEngine, enabledCats) {
   });
 }
 
+// ─── Smooth progress animator (shared by ALL scanners) ──────────────────────
+// The backend only reports progress in discrete jumps (e.g. one bump per
+// finished attack engine). Setting the bar width straight from those values
+// makes it look frozen and then leap. This drives the #scan-bar every frame
+// with requestAnimationFrame so it CRAWLS like a download: it glides up to
+// each real value, then trickles forward very slowly between updates so it's
+// always alive — without ever running dishonestly far ahead of the real work.
+const _scanBar = (function () {
+  // Driven by setInterval (not requestAnimationFrame) so the bar keeps
+  // crawling even if the user switches to another browser tab mid-scan —
+  // rAF is suspended in background tabs, timers are not.
+  const TICK_MS = 33;                       // ~30 fps
+  let displayed = 0, target = 0, finished = false, timer = null;
+  const barEl = () => document.getElementById('scan-bar');
+  const pctEl = () => document.getElementById('scan-pct');
+  function render() {
+    const b = barEl(); if (b) b.style.width = displayed.toFixed(1) + '%';
+    const p = pctEl(); if (p) p.textContent = Math.round(displayed) + '%';
+  }
+  function tick() {
+    let goal, speed;
+    if (finished)                { goal = 100;                        speed = 0.14; }
+    else if (displayed < target) { goal = target;                    speed = 0.09; } // glide up to real progress
+    else                         { goal = Math.min(target + 2.5, 99); speed = 0.012; } // honest trickle while waiting
+    displayed += (goal - displayed) * speed;
+    if (!finished && displayed > 99)   displayed = 99;
+    if (finished  && displayed > 99.6) displayed = 100;
+    render();
+    if (finished && displayed >= 100) { stop(); }
+  }
+  function ensureRunning() { if (!timer) timer = setInterval(tick, TICK_MS); }
+  function stop() { if (timer) { clearInterval(timer); timer = null; } }
+  return {
+    reset() {
+      displayed = 0; target = 0; finished = false;
+      const b = barEl(); if (b) { b.style.transition = 'none'; b.style.background = ''; }
+      render();
+      ensureRunning();
+    },
+    to(v) {                       // report a real backend progress value (monotonic)
+      v = Number(v) || 0;
+      if (v > target) target = Math.min(v, 100);
+      if (!finished) ensureRunning();
+    },
+    finish() { finished = true; ensureRunning(); },
+    stop() { stop(); },
+  };
+})();
+
 function pollOwasp2025Scan(scanId) {
   if (_owasp2025PollTimer) clearInterval(_owasp2025PollTimer);
   _o2025_seenStages.clear();
+  _scanBar.reset();
   _owasp2025PollTimer = setInterval(async () => {
     if (_scanStopped) {
       clearInterval(_owasp2025PollTimer); _owasp2025PollTimer = null;
@@ -4111,8 +4313,7 @@ function pollOwasp2025Scan(scanId) {
       const data = await r.json();
       if (!r.ok) throw new Error(data.detail || 'Poll error');
       const s = data.scan;
-      document.getElementById('scan-bar').style.width = (s.progress||0) + '%';
-      document.getElementById('scan-pct').textContent = (s.progress||0) + '%';
+      _scanBar.to(s.progress || 0);
       document.getElementById('scan-step').textContent = s.phase || s.status;
 
       // ── New per-engine stage animation ──────────────────────────────
@@ -4155,6 +4356,7 @@ function pollOwasp2025Scan(scanId) {
         document.getElementById('scan-btn').textContent = 'Launch Scan';
         document.getElementById('stop-scan-btn').style.display = 'none';
         if (s.status === 'completed') {
+          _scanBar.finish();
           addScanLog(`✓ Scan complete — ${s.total_findings||0} findings in ${(s.duration_s||0).toFixed(1)}s`);
           renderOwasp2025Results(data);
           // Also load + render attack chains
@@ -4168,6 +4370,7 @@ function pollOwasp2025Scan(scanId) {
           });
         } else if (s.status === 'failed') {
           // Make failure obvious — red bar, clear step text (was staying green at 100%)
+          _scanBar.stop();
           const bar = document.getElementById('scan-bar');
           if (bar) { bar.style.width = '100%'; bar.style.background = '#e53935'; }
           const step = document.getElementById('scan-step');
@@ -4178,13 +4381,14 @@ function pollOwasp2025Scan(scanId) {
             ? 'Target is offline or blocking requests — the scanner is fine, the site is not reachable. Try a target that is up (e.g. http://zero.webappsecurity.com).'
             : 'Scan failed: ' + err));
         } else {
+          _scanBar.stop();
           addScanLog('⏹ Scan cancelled');
         }
       }
     } catch (e) {
       addScanLog('Poll error: ' + e.message);
     }
-  }, 2500);
+  }, 1800);
 }
 
 // ─── Attack chain loader + renderer ─────────────────────────────────────────
@@ -4526,9 +4730,9 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function pollScan(taskId) {
-  let fakeProgress = 5;
   let pollCount = 0;
   const MAX_POLLS = 90;
+  _scanBar.reset();
 
   // Pipeline stage map: pick based on current scan type
   const scanType = document.getElementById('scan-type')?.value || 'full';
@@ -4560,15 +4764,15 @@ function pollScan(taskId) {
 
   if (pollInterval) clearInterval(pollInterval);
   pollInterval = setInterval(async () => {
-    if (_scanStopped) { clearInterval(pollInterval); return; }
+    if (_scanStopped) { clearInterval(pollInterval); _scanBar.stop(); return; }
     pollCount++;
 
-    // Smoothly advance fake progress toward 90
-    const progressTarget = Math.min(5 + (pollCount / MAX_POLLS) * 85, 90);
-    fakeProgress = Math.min(fakeProgress + (progressTarget - fakeProgress) * 0.35 + Math.random() * 1.2, 90);
-    document.getElementById('scan-bar').style.width = fakeProgress + '%';
-    document.getElementById('scan-pct').textContent = Math.round(fakeProgress) + '%';
-    updatePipelineStages(fakeProgress);
+    // ScanJob (Celery) reports coarse/occasional progress, so drive a gentle
+    // time-based ramp toward 90 and let _scanBar animate it smoothly. The real
+    // backend value (below) overrides the ramp whenever it's further along.
+    const ramp = Math.min(5 + (pollCount / MAX_POLLS) * 85, 90);
+    _scanBar.to(ramp);
+    updatePipelineStages(ramp);
 
     try {
       const pollId = currentScanId || taskId;
@@ -4584,13 +4788,11 @@ function pollScan(taskId) {
         return;
       }
       const d = await r.json();
-      // Sync with real backend progress
+      // Sync with real backend progress — it wins whenever it's ahead of the ramp
       const backendProg = d.progress || 0;
-      if (backendProg > fakeProgress) {
-        fakeProgress = backendProg;
-        document.getElementById('scan-bar').style.width = fakeProgress + '%';
-        document.getElementById('scan-pct').textContent = Math.round(fakeProgress) + '%';
-        updatePipelineStages(fakeProgress);
+      if (backendProg > 0) {
+        _scanBar.to(backendProg);
+        updatePipelineStages(Math.max(backendProg, ramp));
       }
       const status = (d.status || '').toUpperCase();
       if (status === 'COMPLETED') {
@@ -4600,9 +4802,7 @@ function pollScan(taskId) {
           const el = document.getElementById(id);
           if (el) el.className = 'pipeline-stage done';
         });
-        fakeProgress = 100;
-        document.getElementById('scan-bar').style.width = '100%';
-        document.getElementById('scan-pct').textContent = '100%';
+        _scanBar.finish();
         document.getElementById('scan-step').textContent = '✅ Scan complete';
         const cnt = d.total_issues || 0;
         const scoreColor = (d.security_score||0) >= 80 ? '🟢' : (d.security_score||0) >= 60 ? '🟡' : '🔴';
@@ -4626,8 +4826,7 @@ function pollScan(taskId) {
         addScanLog('⏱ Poll timeout — attempting to load partial results...');
         if (d.vulnerabilities && d.vulnerabilities.length >= 0) {
           PIPELINE.forEach(([id]) => { const el = document.getElementById(id); if(el) el.className='pipeline-stage done'; });
-          document.getElementById('scan-bar').style.width = '100%';
-          document.getElementById('scan-pct').textContent = '100%';
+          _scanBar.finish();
           setTimeout(() => showScanResults(d), 500);
         }
       }
