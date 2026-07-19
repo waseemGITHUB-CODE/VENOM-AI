@@ -3436,6 +3436,31 @@ function isValidUrl(url) {
   }
 }
 
+// Pre-flight reachability check — shared by Scanner, NHI Scanner, and Threat
+// Intel's VirusTotal check, so a typo'd or dead domain fails fast with a
+// clear message instead of burning a full scan or returning a confusing
+// downstream error. Returns {proceed, message} — proceed is false only when
+// DNS resolution genuinely failed (the domain doesn't exist); a resolvable
+// domain that just didn't answer HTTP is a soft warning, not a hard block.
+async function checkTargetReachable(rawUrl, inputId) {
+  try {
+    const r = await fetch(`${API_BASE}/api/verify/reachable?url=${encodeURIComponent(rawUrl)}`);
+    const d = await r.json();
+    if (!d.reachable) {
+      if (inputId) showUrlError(inputId, d.message || 'Target is not reachable.');
+      return { proceed: false, message: d.message };
+    }
+    if (d.http_ok === false) {
+      _showToast && _showToast('⚠ ' + d.message, 'warn');
+    }
+    return { proceed: true, message: d.message };
+  } catch (e) {
+    // Reachability check itself failed (e.g. API offline) — don't block the
+    // scan on that; let the scan's own error handling take over as usual.
+    return { proceed: true, message: null };
+  }
+}
+
 function showUrlError(inputId, message) {
   const el = document.getElementById(inputId);
   if (!el) return;
@@ -3478,6 +3503,15 @@ async function startScan() {
     showUrlError('scan-url', 'Invalid URL — enter a valid address like https://example.com');
     return;
   }
+
+  // ─── Pre-flight: does this target even exist? Fails fast on a typo'd or
+  // dead domain instead of burning a full scan cycle finding that out. ───
+  const launchBtn = document.getElementById('scan-btn');
+  const _origBtnText = launchBtn ? launchBtn.textContent : '';
+  if (launchBtn) { launchBtn.disabled = true; launchBtn.textContent = 'Checking target...'; }
+  const reach = await checkTargetReachable(url, 'scan-url');
+  if (launchBtn) { launchBtn.disabled = false; launchBtn.textContent = _origBtnText; }
+  if (!reach.proceed) return;
 
   // ─── BRANCH: OWASP 2025 active scan uses different endpoint + UI flow ───
   if (type === 'owasp2025') {
@@ -6272,7 +6306,10 @@ async function runNHIScan() {
   }
   const el  = document.getElementById('nhi-results');
   const btn = document.querySelector('#page-nhi .btn-primary');
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Scanning...'; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking target...'; }
+  const reach = await checkTargetReachable(url, 'nhi-url');
+  if (!reach.proceed) { if (btn) { btn.disabled = false; btn.textContent = 'Scan NHI'; } return; }
+  if (btn) { btn.textContent = '⏳ Scanning...'; }
 
   const NHI_STAGES = [
     {label:'Fetching HTML source code'},
@@ -6423,6 +6460,22 @@ async function runVTCheck() {
   const btn = document.getElementById('vt-check-btn');
   if (!target) { el.innerHTML = _tiErrorCard('Enter a URL, domain, IP, or file hash first.'); return; }
   btn.disabled = true; btn.textContent = 'Checking...';
+
+  // Reachability only makes sense for URLs/domains — VirusTotal's IP and file
+  // hash lookups query historical data and are valid regardless of whether
+  // anything is live right now, so skip the pre-flight check for those.
+  const isHash = /^[a-fA-F0-9]{32}$|^[a-fA-F0-9]{40}$|^[a-fA-F0-9]{64}$/.test(target);
+  const isIP   = /^\d{1,3}(\.\d{1,3}){3}$/.test(target);
+  if (!isHash && !isIP) {
+    el.innerHTML = `<div style="text-align:center;padding:24px;color:var(--muted);font-family:var(--mono);font-size:12px">Checking target...</div>`;
+    const reach = await checkTargetReachable(target, 'vt-target');
+    if (!reach.proceed) {
+      el.innerHTML = _tiErrorCard(reach.message || 'Target is not reachable.');
+      btn.disabled = false; btn.textContent = 'Check';
+      return;
+    }
+  }
+
   el.innerHTML = `<div style="text-align:center;padding:24px;color:var(--muted);font-family:var(--mono);font-size:12px">Querying VirusTotal...</div>`;
   try {
     const r = await fetch(`${API_BASE}/api/threat/vt/check`, {

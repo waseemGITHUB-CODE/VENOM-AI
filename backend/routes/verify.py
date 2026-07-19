@@ -7,14 +7,19 @@ Endpoints:
   POST   /api/verify/domain/check/{id}    — run verification check NOW
   GET    /api/verify/domain/list          — list user's domains
   DELETE /api/verify/domain/{id}          — remove a domain
+  GET    /api/verify/reachable            — is this target even up? (pre-flight
+                                             check used by Scanner/Threat Intel/
+                                             NHI Scanner before running anything)
 """
 from __future__ import annotations
 
 import logging
+import socket
 from datetime import datetime
 from typing import Optional
+from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -212,3 +217,74 @@ def delete_domain(
     db.delete(d)
     db.commit()
     return {"message": "Domain removed"}
+
+
+# ─────────────────────────────────────────────────────────────────────────
+#  Reachability pre-flight — "does this target even exist" check, run BEFORE
+#  the Scanner / Threat Intel / NHI Scanner do anything real, so a typo'd or
+#  dead domain fails fast with a clear message instead of burning a full
+#  scan cycle (or, for Threat Intel, returning a confusing VirusTotal /
+#  NVD error) on something that was never going to work.
+# ─────────────────────────────────────────────────────────────────────────
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+
+
+@router.get("/reachable")
+def check_reachable(url: str = Query(..., description="URL, bare domain, or IP to check")):
+    raw = url.strip()
+    if not raw:
+        raise HTTPException(400, "No target provided")
+
+    full = raw if "://" in raw else f"https://{raw}"
+    try:
+        host = urlparse(full).hostname or ""
+    except Exception:
+        host = ""
+    if not host:
+        return {"reachable": False, "dns_resolved": False, "http_ok": None,
+                "resolved_ip": None, "message": "Not a valid URL or domain."}
+
+    if host in _LOCAL_HOSTS or host.startswith("192.168.") or host.startswith("10.") or host.endswith(".local"):
+        return {"reachable": True, "dns_resolved": True, "http_ok": None,
+                "resolved_ip": host, "message": "Local target — skipping reachability check."}
+
+    # 1) DNS — does this hostname resolve at all? This alone answers "does
+    #    this domain exist" for the vast majority of typo/fake-domain cases.
+    resolved_ip = None
+    old_timeout = socket.getdefaulttimeout()
+    try:
+        socket.setdefaulttimeout(5.0)
+        resolved_ip = socket.gethostbyname(host)
+    except socket.gaierror:
+        return {"reachable": False, "dns_resolved": False, "http_ok": None,
+                "resolved_ip": None,
+                "message": f'"{host}" does not exist — DNS lookup failed. Check for a typo.'}
+    except Exception as e:
+        return {"reachable": False, "dns_resolved": False, "http_ok": None,
+                "resolved_ip": None, "message": f"Could not resolve \"{host}\": {e}"}
+    finally:
+        socket.setdefaulttimeout(old_timeout)
+
+    # 2) HTTP — is something actually listening? A failure here is a softer
+    #    signal than a DNS failure (the domain is real but may be down, or
+    #    just slow/blocking automated probes), so it downgrades reachable
+    #    to a warning rather than a hard block.
+    http_ok = False
+    try:
+        import httpx
+        with httpx.Client(timeout=6.0, follow_redirects=True, verify=False,
+                           headers={"User-Agent": "VENOM-AI-Reachability/1.0"}) as client:
+            try:
+                r = client.head(full)
+            except httpx.HTTPError:
+                r = client.get(full)
+            http_ok = r.status_code < 500
+    except Exception:
+        http_ok = False
+
+    if http_ok:
+        return {"reachable": True, "dns_resolved": True, "http_ok": True,
+                "resolved_ip": resolved_ip, "message": f'"{host}" is up (resolved to {resolved_ip}).'}
+    return {"reachable": True, "dns_resolved": True, "http_ok": False,
+            "resolved_ip": resolved_ip,
+            "message": f'"{host}" resolves ({resolved_ip}) but did not respond to an HTTP request — it may be down, slow, or blocking automated requests. You can still proceed.'}
