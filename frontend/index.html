@@ -3511,7 +3511,10 @@ async function startScan() {
   if (launchBtn) { launchBtn.disabled = true; launchBtn.textContent = 'Checking target...'; }
   const reach = await checkTargetReachable(url, 'scan-url');
   if (launchBtn) { launchBtn.disabled = false; launchBtn.textContent = _origBtnText; }
-  if (!reach.proceed) return;
+  if (!reach.proceed) {
+    document.getElementById('scan-results-wrap').style.display = 'none'; // don't leave stale results from a previous scan visible
+    return;
+  }
 
   // ─── BRANCH: OWASP 2025 active scan uses different endpoint + UI flow ───
   if (type === 'owasp2025') {
@@ -3526,6 +3529,7 @@ async function startScan() {
   const authorized = _owasp2025AuthState.domain === domain &&
     (_owasp2025AuthState.verified || _owasp2025AuthState.demo || _owasp2025AuthState.localhost);
   if (!authorized) {
+    document.getElementById('scan-results-wrap').style.display = 'none';
     alert(
       `Cannot scan "${domain}" — it is not a verified domain, a public demo target, or localhost. ` +
       `Verify ownership first (see the panel above), or scan http://zero.webappsecurity.com / ` +
@@ -3535,6 +3539,7 @@ async function startScan() {
   }
   const consentBox = document.getElementById('active-consent-check');
   if (!consentBox || !consentBox.checked) {
+    document.getElementById('scan-results-wrap').style.display = 'none';
     alert('Please check the authorization box confirming you own this target (or have written permission) before scanning.');
     consentBox && consentBox.focus();
     return;
@@ -6340,7 +6345,15 @@ async function runNHIScan() {
   const btn = document.querySelector('#page-nhi .btn-primary');
   if (btn) { btn.disabled = true; btn.textContent = 'Checking target...'; }
   const reach = await checkTargetReachable(url, 'nhi-url');
-  if (!reach.proceed) { if (btn) { btn.disabled = false; btn.textContent = 'Scan NHI'; } return; }
+  if (!reach.proceed) {
+    // Clear any stale results from a previous successful scan — otherwise
+    // the block message shows on top of old "No Secrets Exposed" results
+    // from a different attempt, which reads as if the scan both failed
+    // and succeeded at the same time.
+    el.innerHTML = `<div style="text-align:center;padding:40px;color:var(--red);font-family:var(--mono);font-size:12px">⚠ ${escapeHtml(reach.message || 'Target is not reachable.')}</div>`;
+    if (btn) { btn.disabled = false; btn.textContent = 'Scan NHI'; }
+    return;
+  }
   if (btn) { btn.textContent = '⏳ Scanning...'; }
 
   const NHI_STAGES = [

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import socket
+import time
 from datetime import datetime
 from typing import Optional
 from urllib.parse import urlparse
@@ -250,20 +251,33 @@ def check_reachable(url: str = Query(..., description="URL, bare domain, or IP t
 
     # 1) DNS — does this hostname resolve at all? This alone answers "does
     #    this domain exist" for the vast majority of typo/fake-domain cases.
+    #    A single DNS query can fail transiently (resolver timeout, brief
+    #    network hiccup) even for a domain that's perfectly real — confirmed
+    #    live: the same domain failed once then succeeded 5/5 times right
+    #    after, with nothing about the domain having changed. Retry a couple
+    #    times before concluding the domain genuinely doesn't exist, so a
+    #    one-off blip doesn't block a real target.
     resolved_ip = None
     old_timeout = socket.getdefaulttimeout()
+    last_err: Optional[Exception] = None
     try:
         socket.setdefaulttimeout(5.0)
-        resolved_ip = socket.gethostbyname(host)
-    except socket.gaierror:
-        return {"reachable": False, "dns_resolved": False, "http_ok": None,
-                "resolved_ip": None,
-                "message": f'"{host}" does not exist — DNS lookup failed. Check for a typo.'}
-    except Exception as e:
-        return {"reachable": False, "dns_resolved": False, "http_ok": None,
-                "resolved_ip": None, "message": f"Could not resolve \"{host}\": {e}"}
+        for attempt in range(3):
+            try:
+                resolved_ip = socket.gethostbyname(host)
+                last_err = None
+                break
+            except socket.gaierror as e:
+                last_err = e
+                if attempt < 2:
+                    time.sleep(0.5)
     finally:
         socket.setdefaulttimeout(old_timeout)
+
+    if last_err is not None:
+        return {"reachable": False, "dns_resolved": False, "http_ok": None,
+                "resolved_ip": None,
+                "message": f'"{host}" does not exist — DNS lookup failed 3/3 tries. Check for a typo.'}
 
     # 2) HTTP — is something actually listening? A failure here is a softer
     #    signal than a DNS failure (the domain is real but may be down, or
