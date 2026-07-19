@@ -4274,6 +4274,15 @@ function renderOwasp2025Results(data) {
           <div style="font-size:11px; color:var(--text); margin-top:2px; font-family:var(--mono);">${esc(f.evidence)}</div>` : ''}
         ${f.recommendation ? `<div style="font-size:10px; color:var(--acid); text-transform:uppercase; margin-top:8px;">How to Fix</div>
           <div style="font-size:12px; color:var(--text); line-height:1.6; margin-top:2px;">${esc(f.recommendation)}</div>` : ''}
+        ${f.ai_code_fix ? `
+        <div style="border-left:3px solid var(--acid); padding-left:12px; background:rgba(57,255,20,0.04); border-radius:0 4px 4px 0; margin-top:10px;">
+          <div style="font-size:10px; color:var(--acid); text-transform:uppercase; display:flex; align-items:center; gap:8px;">
+            <span>✨ AI-Generated Code Fix</span>
+            ${f.ai_fix_language ? `<span style="background:rgba(57,255,20,.15); color:var(--acid); padding:2px 8px; border-radius:3px; font-size:9px; font-family:var(--mono); letter-spacing:.04em;">${esc(f.ai_fix_language.toUpperCase())}</span>` : ''}
+            <button class="btn btn-ghost btn-sm" style="margin-left:auto; padding:3px 8px; font-size:10px;" onclick="event.stopPropagation();_copyCodeFix('owasp-${f.id||0}')">📋 Copy</button>
+          </div>
+          <pre id="ai-fix-owasp-${f.id||0}" style="background:#050810; border:1px solid var(--border, rgba(57,255,20,.2)); border-radius:4px; padding:12px 14px; font-family:var(--mono); font-size:11px; color:var(--acid2,#7ee787); white-space:pre-wrap; word-break:break-word; line-height:1.6; margin-top:8px; overflow-x:auto;">${esc(f.ai_code_fix)}</pre>
+        </div>` : ''}
         <div style="margin-top:10px; display:flex; justify-content:flex-end;">
           <button onclick="markFalsePositive(${f.id||0}, this)" title="Hide this as a false positive (won't reappear on re-scan)"
             style="font-size:10px; background:none; border:1px solid var(--border); color:var(--muted); border-radius:5px; padding:4px 10px; cursor:pointer;"
@@ -4680,26 +4689,57 @@ async function loadScanResults(taskId) {
 
 async function loadHistory() {
   try {
-    const r = await fetch(`${API_BASE}/api/scan/?limit=20`, {mode:'cors'});
-    if (!r.ok) throw new Error();
-    const d = await r.json();
-    const scans = d.scans || [];
-    document.getElementById('history-count').textContent = scans.length + ' scans';
+    const rows = [];
+
+    // OWASP 2025 active scans (AttackScan) — separate table from the one below,
+    // never included here before, which is why they'd vanish from this list
+    // after a reload even though the scan itself saved fine server-side.
+    try {
+      const ra = await VenomAuth.authFetch('/api/attack/list?limit=20');
+      const da = await ra.json();
+      (da.scans || []).forEach(s => rows.push({
+        sys: 'attack', id: s.id,
+        target_url: s.target_url, scan_type: 'owasp2025',
+        total_issues: s.total_findings, status: s.status,
+        created_at: s.completed_at || s.started_at,
+      }));
+    } catch (_) {}
+
+    // Older generic scans (quick / full / webapp / infra / recon)
+    try {
+      const r = await fetch(`${API_BASE}/api/scan/?limit=20`, {mode:'cors'});
+      if (r.ok) {
+        const d = await r.json();
+        (d.scans || []).forEach(s => rows.push({
+          sys: 'scan', id: s.celery_task_id || s.task_id || s.scan_id,
+          pdfId: s.scan_id || s.id,
+          target_url: s.target_url || s.url, scan_type: s.scan_type || 'full',
+          security_score: s.security_score, total_issues: s.total_issues,
+          status: s.status, created_at: s.created_at,
+        }));
+      }
+    } catch (_) {}
+
+    rows.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+
+    document.getElementById('history-count').textContent = rows.length + ' scans';
     const tbody = document.getElementById('history-body');
-    if (!scans.length) {
+    if (!rows.length) {
       tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:24px;font-family:var(--mono);font-size:11px">No scans yet</td></tr>`;
     } else {
-      tbody.innerHTML = scans.map(s => `
+      tbody.innerHTML = rows.map(s => `
         <tr>
-          <td style="font-family:var(--mono);font-size:11px;color:var(--acid2);max-width:200px;overflow:hidden;text-overflow:ellipsis">${s.target_url||s.url||'—'}</td>
-          <td style="font-family:var(--mono);font-size:10px;color:var(--muted)">${s.scan_type||'full'}</td>
+          <td style="font-family:var(--mono);font-size:11px;color:var(--acid2);max-width:200px;overflow:hidden;text-overflow:ellipsis">${s.target_url||'—'}</td>
+          <td style="font-family:var(--mono);font-size:10px;color:var(--muted)">${s.scan_type}</td>
           <td>${s.security_score ? `<span style="font-family:var(--head);font-weight:700;color:${s.security_score>=80?'var(--acid)':s.security_score>=60?'var(--yellow)':'var(--red)'}">${s.security_score}</span>` : '—'}</td>
           <td style="font-family:var(--mono);font-size:11px;color:var(--red)">${s.total_issues||0}</td>
           <td>${statusBadge(s.status)}</td>
           <td style="font-family:var(--mono);font-size:10px;color:var(--muted)">${s.created_at ? new Date(s.created_at).toLocaleDateString() : '—'}</td>
           <td style="display:flex;gap:6px">
-            <button class="btn btn-ghost btn-sm" onclick="loadScanResults('${s.celery_task_id||s.task_id||s.scan_id}')">View</button>
-            <button class="btn btn-ghost btn-sm" onclick="downloadReport(${s.scan_id||s.id})">PDF</button>
+            ${s.sys === 'attack'
+              ? `<button class="btn btn-ghost btn-sm" onclick="loadOwasp2025ScanById(${s.id})">View</button>`
+              : `<button class="btn btn-ghost btn-sm" onclick="loadScanResults('${s.id}')">View</button>
+                 <button class="btn btn-ghost btn-sm" onclick="downloadReport(${s.pdfId})">PDF</button>`}
           </td>
         </tr>`).join('');
     }
@@ -4707,6 +4747,25 @@ async function loadHistory() {
     console.warn('History load failed:', e.message);
     document.getElementById('history-body').innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:24px;font-family:var(--mono);font-size:11px">API Offline — start uvicorn on port 8000</td></tr>';
     document.getElementById('history-count').textContent = 'offline';
+  }
+}
+
+// Load a previously-completed OWASP 2025 scan's results from the server —
+// used by the Scan History "View" button so results survive a page reload
+// instead of only existing as in-memory state from the live scan run.
+async function loadOwasp2025ScanById(scanId) {
+  try {
+    const r = await VenomAuth.authFetch(`/api/attack/${scanId}`);
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || 'Failed to load scan');
+    document.getElementById('scan-type').value = 'owasp2025';
+    updateScanTypeUI('owasp2025');
+    document.getElementById('scan-url').value = data.scan?.target_url || '';
+    document.getElementById('scan-progress-wrap').style.display = 'none';
+    document.getElementById('scan-history-wrap').style.display = 'none';
+    renderOwasp2025Results(data);
+  } catch (e) {
+    alert('Could not load scan results: ' + e.message);
   }
 }
 
