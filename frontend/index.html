@@ -3625,9 +3625,12 @@ function updateScanTypeUI(type) {
     const newGrid = document.getElementById('pipeline-stages-2025');
     if (oldGrid) oldGrid.style.display = 'none';
     if (newGrid) newGrid.style.display = 'grid';
-    // Single-user / self-hosted: no authorization panel — you scan your own targets.
+    // Show the authorization panel — startOwasp2025Scan() actually enforces
+    // what it displays (verified/demo/localhost + consent checkbox), so it
+    // must be visible whenever OWASP Scanner is selected, not hidden.
     const ap = document.getElementById('active-auth-panel');
-    if (ap) ap.style.display = 'none';
+    if (ap) ap.style.display = 'block';
+    precheckOwasp2025Authorization();
     return;
   }
 
