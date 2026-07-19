@@ -19,7 +19,7 @@ from auth.dependencies import get_optional_user
 from db.models import User as _AuthUser
 from security.forbidden_targets import check_forbidden
 from security.domain_verify import is_domain_verified, normalize_domain
-from security.demo_targets import is_authorized_without_verification
+from security.demo_targets import is_authorized_without_verification, is_demo_target
 
 router = APIRouter()
 logger = logging.getLogger("venom.scan")
@@ -778,7 +778,21 @@ async def nhi_scan(req: NHIScanRequest):
     except Exception as e:
         err_str = str(e)
         parsed_host = _up(url).netloc or url
-        if any(k in err_str for k in ("Max retries", "Failed to establish", "Name or service not known",
+        # A known public demo target that won't connect is almost never a typo
+        # or a truly dead host — these sites (esp. the Acunetix vulnweb.com
+        # ones) are the most-scanned URLs on the internet and rate-limit /
+        # block aggressively, so from a given network they often just stop
+        # answering. Say that plainly instead of "check the URL", which sends
+        # the user hunting for a mistake that isn't there.
+        if is_demo_target(url) and any(k in err_str for k in (
+                "Max retries", "Failed to establish", "Connection refused",
+                "timed out", "timeout", "read timeout")):
+            clean_err = (f"The public demo site {parsed_host} isn't responding to your connection "
+                         f"right now — these test sites are heavily rate-limited and often block "
+                         f"automated requests. This isn't a VENOM error and the URL is fine. "
+                         f"Try a demo target that's currently up: demo.testfire.net or "
+                         f"zero.webappsecurity.com.")
+        elif any(k in err_str for k in ("Max retries", "Failed to establish", "Name or service not known",
                                        "Connection refused", "nodename nor servname", "getaddrinfo")):
             clean_err = (f"Cannot connect to {parsed_host} — the host is unreachable or does not exist. "
                          f"Make sure the URL is correct and publicly accessible.")

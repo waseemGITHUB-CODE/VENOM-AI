@@ -22,16 +22,23 @@ from urllib.parse import urlparse
 
 # ── Curated demo target list ────────────────────────────────────────────────
 # Each entry: (domain, description, vendor)
+#
+# ORDERING MATTERS: list_demo_targets() surfaces these to users as "try these"
+# suggestions in the order below, so the reliably-responsive targets come
+# FIRST. The Acunetix vulnweb.com PHP/HTML5 subdomains are famously the most
+# scanned URLs on the internet and get throttled/blocked hard — from many
+# networks they simply don't respond at all (confirmed: direct curl to
+# testphp.vulnweb.com times out over both http and https while testasp on the
+# same infrastructure answers in ~0.6s). They're still valid, publicly-invited
+# demo targets so we keep them AUTHORIZED, but they're listed last so users
+# aren't steered onto a target that's likely dead for their connection.
 DEMO_TARGETS = [
-    # ─── Acunetix's public vulnerable test sites ────────────────────────
-    ("testphp.vulnweb.com",      "Acunetix — vulnerable PHP demo (XSS, SQLi, etc.)",  "Acunetix"),
+    # ─── Rock-solid, reliably-up demo targets (surfaced first) ──────────
+    ("demo.testfire.net",        "IBM AppScan — AltoroMutual vulnerable banking demo", "IBM"),
+    ("zero.webappsecurity.com",  "Micro Focus — Zero Bank vulnerable demo",            "Micro Focus"),
     ("testasp.vulnweb.com",      "Acunetix — vulnerable ASP demo",                     "Acunetix"),
     ("testaspnet.vulnweb.com",   "Acunetix — vulnerable ASP.NET demo",                 "Acunetix"),
-    ("testhtml5.vulnweb.com",    "Acunetix — vulnerable HTML5 demo",                   "Acunetix"),
-    # ─── IBM's classic AltoroMutual demo bank ───────────────────────────
-    ("demo.testfire.net",        "IBM AppScan — AltoroMutual vulnerable banking demo", "IBM"),
-    # ─── Micro Focus vulnerable demo ────────────────────────────────────
-    ("zero.webappsecurity.com",  "Micro Focus — Zero Bank vulnerable demo",            "Micro Focus"),
+    ("httpbin.org",              "Postman — HTTP request/response testing",            "Postman"),
     # ─── OWASP Juice Shop (public hosted instance) ──────────────────────
     ("juice-shop.herokuapp.com", "OWASP Juice Shop — modern vulnerable web app",       "OWASP"),
     ("preview.owasp-juice.shop", "OWASP Juice Shop — preview instance",                "OWASP"),
@@ -39,10 +46,12 @@ DEMO_TARGETS = [
     ("badssl.com",               "BadSSL — TLS misconfiguration testing site",         "Chrome Team"),
     ("expired.badssl.com",       "BadSSL — expired certificate test",                  "Chrome Team"),
     ("self-signed.badssl.com",   "BadSSL — self-signed certificate test",              "Chrome Team"),
-    # ─── HTTPbin — HTTP testing ─────────────────────────────────────────
-    ("httpbin.org",              "Postman — HTTP request/response testing",            "Postman"),
     # ─── Hack The Box public CTF ────────────────────────────────────────
     ("hackthebox.eu",            "Hack The Box — CTF training platform",               "Hack The Box"),
+    # ─── Heavily-throttled Acunetix demos (authorized, but often dead from
+    #     a given network — listed last so they're not the default pick) ──
+    ("testphp.vulnweb.com",      "Acunetix — vulnerable PHP demo (often rate-limited)", "Acunetix"),
+    ("testhtml5.vulnweb.com",    "Acunetix — vulnerable HTML5 demo (often rate-limited)", "Acunetix"),
 ]
 
 
