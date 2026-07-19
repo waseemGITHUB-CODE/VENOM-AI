@@ -748,6 +748,36 @@ def _build_messages(history: List[dict], user_message: str,
             parts.append("Top findings from the last scan:")
             for v in context["vulnerabilities"][:5]:
                 parts.append(f"  [{v.get('severity','?').upper()}] {v.get('title') or v.get('vuln_type','?')}")
+        # Attack Chain Graph the user is looking at — lets the AI discuss the
+        # actual chains on screen (which to fix first, how they'd be exploited,
+        # how they connect) instead of talking in generalities.
+        ag = context.get("attack_graph")
+        if ag and isinstance(ag, dict):
+            parts.append("")
+            parts.append("ATTACK CHAIN GRAPH the user is currently viewing — discuss THESE "
+                         "specific chains, prioritise them, and explain how they'd be exploited "
+                         "or fixed. Do not invent chains that aren't listed here:")
+            if ag.get("target"):
+                parts.append(f"  Target: {ag['target']}")
+            parts.append(f"  {ag.get('chain_count', 0)} attack chain(s) total, "
+                         f"{ag.get('critical_chains', 0)} critical.")
+            if ag.get("techniques"):
+                parts.append("  MITRE techniques: " + ", ".join(str(t) for t in ag["techniques"][:20]))
+            if ag.get("tactics"):
+                parts.append("  Tactics hit: " + ", ".join(str(t) for t in ag["tactics"][:20]))
+            for i, c in enumerate(ag.get("chains", [])[:12], 1):
+                sev = (c.get("severity") or "?").upper()
+                parts.append(f"  Chain {i}: [{sev}] {c.get('title', '?')} "
+                             f"({c.get('owasp', '')} / {c.get('mitre', '')})".rstrip())
+                if c.get("entry_point"):
+                    parts.append(f"      Entry point: {c['entry_point']}")
+                if c.get("impact"):
+                    parts.append(f"      Impact: {c['impact']}")
+                steps = c.get("attacker_steps") or []
+                if steps:
+                    parts.append("      Attacker steps: " + " → ".join(str(s) for s in steps[:6]))
+                if c.get("tools"):
+                    parts.append("      Tools: " + ", ".join(str(t) for t in c["tools"][:8]))
         if parts:
             msgs.append({"role": "system", "content":
                          "VENOM CONTEXT (what the user is working on right now — use this to give "

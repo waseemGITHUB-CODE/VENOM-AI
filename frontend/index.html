@@ -1567,6 +1567,23 @@ border:1px solid rgba(57,255,20,.15);display:flex;align-items:center;justify-con
       <div id="ag-map"></div>
       <!-- Chain SVGs rendered here -->
       <div id="ag-graph"></div>
+
+      <!-- ── Discuss-this-graph AI chat panel ─────────────────────────────── -->
+      <div id="ag-chat-panel" style="display:none;margin-top:20px;background:var(--card);border:1px solid var(--border);border-radius:10px;overflow:hidden">
+        <div style="display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--border);background:linear-gradient(90deg,rgba(139,0,255,.10),transparent)">
+          <span style="font-size:15px">💬</span>
+          <span style="font-family:var(--head);font-size:13px;font-weight:700;color:#c084fc">Discuss this Attack Graph with VENOM AI</span>
+          <span id="ag-chat-ctx" style="margin-left:auto;font-family:var(--mono);font-size:9px;color:var(--muted)">no graph loaded</span>
+        </div>
+        <div id="ag-chat-msgs" style="max-height:360px;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:10px"></div>
+        <div id="ag-chat-suggest" style="display:flex;gap:6px;flex-wrap:wrap;padding:0 16px 10px"></div>
+        <div style="display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--border)">
+          <input id="ag-chat-inp" class="inp" placeholder="e.g. Which chain should I fix first, and why?"
+                 style="flex:1"
+                 onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();agSendChat();}">
+          <button class="btn btn-primary btn-sm" id="ag-chat-send" onclick="agSendChat()">Ask</button>
+        </div>
+      </div>
     </div>
 
     <!-- Kill chain coverage bar at bottom -->
@@ -5156,8 +5173,141 @@ async function _agLoadGraph() {
     // ── Kill chain bar ─────────────────────────────────────────────
     _agRenderKillChain(chains);
 
+    // ── Wire up the "discuss this graph" AI chat with real context ─
+    _agActivateChat(chains, {
+      target: (data.target_url || data.target || (chains[0] && chains[0].target) || ''),
+      sys, id,
+      techniques: [...allTechs],
+      tactics: [...allTactics],
+      critical: critChains,
+    });
+
   } catch(e) {
     _agShowEmpty(`Error loading attack graph: ${e.message}`);
+  }
+}
+
+// ─── Attack-Graph AI chat ────────────────────────────────────────────────
+// Lets the user talk to VENOM AI about the exact chains on screen. The loaded
+// chains are packed into the chat request's `context.attack_graph` so the
+// model can prioritise/explain THESE chains instead of talking in generalities.
+let _agChains = [];
+let _agChatMeta = {};
+let _agChatSession = null;
+
+function _agActivateChat(chains, meta) {
+  _agChains = chains || [];
+  _agChatMeta = meta || {};
+  const panel = document.getElementById('ag-chat-panel');
+  if (!panel) return;
+  panel.style.display = 'block';
+
+  const ctxEl = document.getElementById('ag-chat-ctx');
+  if (ctxEl) {
+    const t = meta.target ? meta.target.replace(/^https?:\/\//, '') : 'this scan';
+    ctxEl.textContent = `${_agChains.length} chain(s) · ${meta.critical || 0} critical · ${t}`;
+  }
+
+  // Only seed the intro + suggestions once per loaded graph (fresh session).
+  _agChatSession = null;
+  const msgs = document.getElementById('ag-chat-msgs');
+  if (msgs) {
+    msgs.innerHTML = '';
+    const crit = meta.critical || 0;
+    const intro = crit > 0
+      ? `I can see **${_agChains.length} attack chain(s)** for this target, **${crit} critical**. Ask me which to fix first, how an attacker would chain them, or how to break the path.`
+      : `I can see **${_agChains.length} attack chain(s)** for this target. Ask me how they'd be exploited, how they connect, or how to remediate them.`;
+    _agAddBubble('ai', markdownToHtml(intro));
+  }
+
+  const suggEl = document.getElementById('ag-chat-suggest');
+  if (suggEl) {
+    const suggestions = [
+      'Which chain should I fix first?',
+      'How would an attacker exploit these together?',
+      'What single fix breaks the most chains?',
+      'Explain the highest-severity chain in plain English.',
+    ];
+    suggEl.innerHTML = suggestions.map(s =>
+      `<button class="btn btn-ghost btn-sm" style="font-size:10px;padding:4px 9px"
+         onclick="document.getElementById('ag-chat-inp').value=this.textContent;agSendChat()">${s}</button>`
+    ).join('');
+  }
+}
+
+function _agAddBubble(role, html) {
+  const msgs = document.getElementById('ag-chat-msgs');
+  if (!msgs) return null;
+  const wrap = document.createElement('div');
+  const isUser = role === 'user';
+  wrap.style.cssText = `max-width:88%;align-self:${isUser ? 'flex-end' : 'flex-start'};` +
+    `background:${isUser ? 'rgba(57,255,20,.10)' : 'rgba(139,0,255,.08)'};` +
+    `border:1px solid ${isUser ? 'rgba(57,255,20,.22)' : 'rgba(139,0,255,.22)'};` +
+    `border-radius:10px;padding:10px 13px;font-size:13px;line-height:1.55;color:var(--text);word-break:break-word`;
+  wrap.innerHTML = (isUser ? '' :
+    `<div style="font-family:var(--mono);font-size:9px;color:#c084fc;margin-bottom:5px;letter-spacing:.08em">VENOM AI</div>`) + html;
+  msgs.appendChild(wrap);
+  msgs.scrollTop = msgs.scrollHeight;
+  return wrap;
+}
+
+async function agSendChat() {
+  const inp = document.getElementById('ag-chat-inp');
+  const btn = document.getElementById('ag-chat-send');
+  if (!inp) return;
+  const msg = inp.value.trim();
+  if (!msg) return;
+  inp.value = '';
+  if (btn) btn.disabled = true;
+
+  _agAddBubble('user', escapeHtml(msg));
+  const thinking = _agAddBubble('ai',
+    `<div class="typing-indicator"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div>`);
+
+  // Compact the on-screen chains into context the model can reason over.
+  const ctxChains = (_agChains || []).slice(0, 12).map(c => ({
+    title: c.title, severity: c.severity, owasp: c.owasp, mitre: c.mitre,
+    entry_point: c.entry_point, impact: c.impact,
+    attacker_steps: (c.attacker_steps || []).slice(0, 6),
+    tools: c.tools || [],
+  }));
+
+  try {
+    const r = await fetch(`${API_BASE}/api/chat/message`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session_id: _agChatSession,
+        message: msg,
+        context: {
+          current_page: 'Attack Graph',
+          target_url: _agChatMeta.target || '',
+          attack_graph: {
+            target: _agChatMeta.target || '',
+            scan_type: _agChatMeta.sys || '',
+            chain_count: (_agChains || []).length,
+            critical_chains: _agChatMeta.critical || 0,
+            techniques: _agChatMeta.techniques || [],
+            tactics: _agChatMeta.tactics || [],
+            chains: ctxChains,
+          },
+        },
+      }),
+    });
+    const d = await r.json();
+    if (d.session_id) _agChatSession = d.session_id;
+    const reply = d.reply || d.error || 'No response.';
+    if (thinking) thinking.innerHTML =
+      `<div style="font-family:var(--mono);font-size:9px;color:#c084fc;margin-bottom:5px;letter-spacing:.08em">VENOM AI</div>` +
+      markdownToHtml(reply);
+  } catch (e) {
+    if (thinking) thinking.innerHTML =
+      `<div style="font-family:var(--mono);font-size:9px;color:var(--red);margin-bottom:5px">VENOM AI · ERROR</div>` +
+      `<span style="color:var(--red)">Couldn't reach VENOM AI: ${escapeHtml(e.message)}</span>`;
+  } finally {
+    if (btn) btn.disabled = false;
+    const msgs = document.getElementById('ag-chat-msgs');
+    if (msgs) msgs.scrollTop = msgs.scrollHeight;
   }
 }
 
@@ -5297,6 +5447,7 @@ function _agShowLoading() {
     </div>`;
   document.getElementById('ag-graph').innerHTML = '';
   const _agm = document.getElementById('ag-map'); if (_agm) _agm.innerHTML = '';
+  const _agc = document.getElementById('ag-chat-panel'); if (_agc) _agc.style.display = 'none';
 }
 
 function _agShowEmpty(msg) {
@@ -5312,6 +5463,7 @@ function _agShowEmpty(msg) {
     <div style="font-family:var(--head);font-size:15px">${msg}</div>`;
   document.getElementById('ag-graph').innerHTML = '';
   const _agm = document.getElementById('ag-map'); if (_agm) _agm.innerHTML = '';
+  const _agc = document.getElementById('ag-chat-panel'); if (_agc) _agc.style.display = 'none';
 }
 
 function _agRenderChain(chain) {
