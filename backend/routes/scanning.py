@@ -1175,7 +1175,9 @@ async def clear_all_scans(current_user: _AuthUser = Depends(get_optional_user)):
                 .delete(synchronize_session=False)
 
         # Delete scans
-        scan_count = scan_q.delete(synchronize_session=False)
+        scan_count = db.query(models.ScanJob)\
+            .filter(models.ScanJob.id.in_(scan_ids))\
+            .delete(synchronize_session=False) if scan_ids else 0
 
         db.commit()
         return {
