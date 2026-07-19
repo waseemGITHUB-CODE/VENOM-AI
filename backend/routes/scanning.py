@@ -733,10 +733,28 @@ async def nhi_scan(req: NHIScanRequest):
                 })
 
     # ── Step 1: Fetch main page HTML ─────────────────────────────────────────
+    # The URL always arrives here as https:// (the frontend/validator default
+    # when the user didn't type a scheme) — but plenty of older sites don't
+    # serve https at all (confirmed live: a real, working demo site 200s
+    # instantly over http but its https port refuses the connection outright,
+    # which used to get reported as "unreachable / does not exist" even
+    # though the site was completely fine). If https fails to connect, always
+    # retry over http before giving up — there's no reliable way to tell
+    # "user explicitly typed https" from "auto-upgraded from a bare domain"
+    # once the frontend has already normalized the URL.
     main_html = ""
     js_urls: list[str] = []
+    tried_http_fallback = False
     try:
-        r = _req.get(url, timeout=15, verify=False, headers=headers_req, allow_redirects=True)
+        try:
+            r = _req.get(url, timeout=15, verify=False, headers=headers_req, allow_redirects=True)
+        except (_req.exceptions.ConnectionError, _req.exceptions.SSLError) as _first_err:
+            if url.startswith("https://"):
+                tried_http_fallback = True
+                url = "http://" + url[len("https://"):]
+                r = _req.get(url, timeout=15, verify=False, headers=headers_req, allow_redirects=True)
+            else:
+                raise
         main_html = r.text
         scan_content(main_html, url, "HTML source")
 

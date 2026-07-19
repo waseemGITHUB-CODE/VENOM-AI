@@ -283,16 +283,34 @@ def check_reachable(url: str = Query(..., description="URL, bare domain, or IP t
     #    signal than a DNS failure (the domain is real but may be down, or
     #    just slow/blocking automated probes), so it downgrades reachable
     #    to a warning rather than a hard block.
+    #
+    #    Always try both schemes, trying whatever scheme the caller sent
+    #    first — the frontend always sends a scheme (it prepends https:// to
+    #    anything the user typed bare), so checking "did the caller specify
+    #    a scheme" doesn't actually distinguish "user really wants https"
+    #    from "auto-upgraded from a bare domain"; in practice it's almost
+    #    always the latter. Confirmed live: a real, working demo site 200s
+    #    instantly over http but its https port doesn't accept connections
+    #    at all, so only ever trying the scheme the frontend guessed
+    #    reported it as down when it was actually fine.
+    alt_scheme = "http" if full.startswith("https://") else "https"
+    candidates = [full, f"{alt_scheme}://{host}"]
     http_ok = False
     try:
         import httpx
         with httpx.Client(timeout=6.0, follow_redirects=True, verify=False,
                            headers={"User-Agent": "VENOM-AI-Reachability/1.0"}) as client:
-            try:
-                r = client.head(full)
-            except httpx.HTTPError:
-                r = client.get(full)
-            http_ok = r.status_code < 500
+            for candidate in candidates:
+                try:
+                    try:
+                        r = client.head(candidate)
+                    except httpx.HTTPError:
+                        r = client.get(candidate)
+                    if r.status_code < 500:
+                        http_ok = True
+                        break
+                except Exception:
+                    continue
     except Exception:
         http_ok = False
 
