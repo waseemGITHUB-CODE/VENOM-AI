@@ -136,7 +136,14 @@ def _update_scan(db: Session, scan_id: int, **fields):
         if scan:
             for k, v in fields.items():
                 setattr(scan, k, v)
-            if "status" in fields and fields["status"] in PROGRESS_PHASES:
+            # PROGRESS_PHASES only supplies a DEFAULT progress for a status when
+            # the caller didn't pass an explicit one. Previously it always won,
+            # which clobbered the fine-grained per-engine progress: every engine
+            # start passes status="running_attacks" + a real 50→90 value, but the
+            # override snapped it back to 50 each time, so the bar looked stuck at
+            # 50% the whole run and then jumped straight to complete. Let an
+            # explicit progress take precedence.
+            if "progress" not in fields and "status" in fields and fields["status"] in PROGRESS_PHASES:
                 scan.progress = PROGRESS_PHASES[fields["status"]]
             db.commit()
     except Exception as e:
