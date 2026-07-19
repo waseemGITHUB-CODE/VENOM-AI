@@ -1415,7 +1415,7 @@ border:1px solid rgba(57,255,20,.15);display:flex;align-items:center;justify-con
         <div id="active-auth-consent" style="display:none; margin-top:10px; padding:10px; background:rgba(15,25,40,.6); border-radius:4px;">
           <label style="display:flex; gap:8px; align-items:flex-start; cursor:pointer; font-size:11px; line-height:1.6; color:var(--text);">
             <input type="checkbox" id="active-consent-check" style="margin-top:3px; width:14px; height:14px; accent-color:#fb8c00;">
-            <span><b style="color:#fff;">I confirm I own this target or have written authorization to scan it.</b> This scan will send real attack payloads (SQLi, XSS, command injection, etc.). I accept full legal responsibility.</span>
+            <span><b style="color:#fff;">I confirm I own this target or have written authorization to scan it.</b> <span id="active-consent-detail">This scan will send real attack payloads (SQLi, XSS, command injection, etc.).</span> I accept full legal responsibility.</span>
           </label>
         </div>
       </div>
@@ -3518,6 +3518,28 @@ async function startScan() {
     return startOwasp2025Scan(url);
   }
 
+  // ─── Authorization — every scan type requires it now, not just the OWASP
+  // active scanner (the backend enforces this the same way regardless of
+  // what's sent here; this is just so the UI fails with a clear message
+  // instead of a raw 403 from the API). ───
+  const domain = _normalizeDomainJS(url);
+  const authorized = _owasp2025AuthState.domain === domain &&
+    (_owasp2025AuthState.verified || _owasp2025AuthState.demo || _owasp2025AuthState.localhost);
+  if (!authorized) {
+    alert(
+      `Cannot scan "${domain}" — it is not a verified domain, a public demo target, or localhost. ` +
+      `Verify ownership first (see the panel above), or scan http://zero.webappsecurity.com / ` +
+      `http://demo.testfire.net / localhost instead.`
+    );
+    return;
+  }
+  const consentBox = document.getElementById('active-consent-check');
+  if (!consentBox || !consentBox.checked) {
+    alert('Please check the authorization box confirming you own this target (or have written permission) before scanning.');
+    consentBox && consentBox.focus();
+    return;
+  }
+
   const btn = document.getElementById('scan-btn');
   btn.disabled = true; btn.textContent = 'Scanning...';
   document.getElementById('stop-scan-btn').style.display = 'inline-flex';
@@ -3534,7 +3556,7 @@ async function startScan() {
     const r = await fetch(`${API_BASE}/api/scan/start`, {
       method:'POST', mode:'cors',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({url, scan_type:type, user_id:'venom'})
+      body:JSON.stringify({url, scan_type:type, user_id:'venom', consent:true})
     });
     if (!r.ok) {
       // ── Quota / plan-gate errors get the upgrade prompt ─────────────
@@ -3664,12 +3686,22 @@ function updateScanTypeUI(type) {
     // must be visible whenever OWASP Scanner is selected, not hidden.
     const ap = document.getElementById('active-auth-panel');
     if (ap) ap.style.display = 'block';
+    const detail = document.getElementById('active-consent-detail');
+    if (detail) detail.textContent = 'This scan will send real attack payloads (SQLi, XSS, command injection, etc.).';
     precheckOwasp2025Authorization();
     return;
   }
 
-  // ── Passive scan types: existing behavior ──
-  document.getElementById('active-auth-panel').style.display = 'none';
+  // ── Passive scan types: same authorization panel as OWASP Scanner —
+  // every scan type requires proof of authorization now, not just the
+  // active attack scanner (startScan() enforces this the same way
+  // startOwasp2025Scan() does, and the backend enforces it server-side
+  // too regardless of what the frontend sends). ──
+  const ap = document.getElementById('active-auth-panel');
+  if (ap) ap.style.display = 'block';
+  const detail = document.getElementById('active-consent-detail');
+  if (detail) detail.textContent = 'This scan probes the target (headers, ports, tech fingerprinting, etc.) — no exploit payloads are sent for this scan type, but authorization is still required.';
+  precheckOwasp2025Authorization();
   const oldGrid = document.getElementById('pipeline-stages');
   const newGrid = document.getElementById('pipeline-stages-2025');
   if (oldGrid) oldGrid.style.display = 'grid';

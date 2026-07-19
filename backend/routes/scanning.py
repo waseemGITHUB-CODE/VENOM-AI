@@ -17,6 +17,9 @@ from pydantic import BaseModel, validator
 
 from auth.dependencies import get_optional_user
 from db.models import User as _AuthUser
+from security.forbidden_targets import check_forbidden
+from security.domain_verify import is_domain_verified, normalize_domain
+from security.demo_targets import is_authorized_without_verification
 
 router = APIRouter()
 logger = logging.getLogger("venom.scan")
@@ -26,6 +29,7 @@ class ScanRequest(BaseModel):
     url: str
     user_id: str = "anonymous"
     scan_type: str = "full"
+    consent: bool = False
 
     @validator("url")
     def validate_url(cls, v):
@@ -877,6 +881,35 @@ async def start_scan(req: ScanRequest, background_tasks: BackgroundTasks,
     except Exception:
         raise HTTPException(status_code=400, detail=f"Invalid URL '{req.url}'. Please enter a valid URL like https://example.com")
     db = _get_db()
+
+    # ── Authorization (ALWAYS enforced, every scan type) ──────────────────
+    # These endpoints used to be passive-only and unauthenticated by design
+    # (no attack payloads sent), but at the user's request every scan type
+    # now requires the same proof-of-authorization as the OWASP active
+    # scanner: forbidden-target blocklist, then verified domain / public
+    # demo target / localhost, then explicit consent.
+    forbid = check_forbidden(db, req.url)
+    if forbid:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Target blocked: {forbid['reason']} (category={forbid['category']}). "
+                   f"VENOM AI never scans {forbid['category']} targets.",
+        )
+    if not req.consent:
+        raise HTTPException(
+            status_code=403,
+            detail="Consent required. Confirm you have authorization to scan this target.",
+        )
+    pre_authorized, _ = is_authorized_without_verification(req.url)
+    verified = is_domain_verified(db, current_user.id if current_user else None, req.url)
+    if not (verified or pre_authorized):
+        target_domain = normalize_domain(req.url) or req.url
+        raise HTTPException(
+            status_code=403,
+            detail=f"Scans require verified domain ownership. Verify {target_domain} first, "
+                   f"or scan a public demo target / localhost.",
+        )
+
     models = _get_models()
     try:
         # Build ScanJob safely — only pass columns that exist in the DB

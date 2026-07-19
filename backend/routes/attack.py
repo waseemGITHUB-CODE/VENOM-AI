@@ -219,9 +219,10 @@ def start_attack(
         raise HTTPException(status_code=status_code, detail=reason)
 
     # ── Single-user / self-hosted mode ───────────────────────────────────
-    # No consent gate, no domain-ownership verification, no concurrent/daily
-    # limits. The ONE safety net we always keep is the forbidden-target
-    # blocklist (.gov/.mil/banks/hospitals) — that stays on for legal safety.
+    # Only affects concurrent/daily scan-rate limits below (no billing plan
+    # to enforce against in single-user mode). Forbidden-target blocking,
+    # consent, and domain-ownership verification are always enforced,
+    # regardless of this flag.
     import os as _os
     _single_user = _os.getenv("SINGLE_USER_MODE", "true").strip().lower() in ("1", "true", "yes", "on")
 
@@ -234,19 +235,24 @@ def start_attack(
             f"VENOM AI never scans {forbid['category']} targets."
         )
 
+    # ── Consent + domain ownership (ALWAYS enforced) ──────────────────────
+    # Was single-user-mode-only ("trust the local operator"); made
+    # unconditional at the user's request so no target can be scanned
+    # without either proving ownership, being a recognized public demo
+    # target, or being localhost — regardless of SINGLE_USER_MODE.
+    if not req.consent:
+        _block("Consent required. Set consent=true to confirm you have authorization to scan this target.")
+
+    pre_authorized, pre_auth_reason = is_authorized_without_verification(target_url)
+    verified = is_domain_verified(db, user.id, target_url)
+    if not (verified or pre_authorized):
+        _block(
+            "Active scans require verified domain ownership. "
+            f"Verify {target_domain} first, or scan a public demo target / localhost."
+        )
+
     if not _single_user:
-        # ── Multi-user mode: enforce consent + ownership + limits ────────
-        if not req.consent:
-            _block("Consent required. Set consent=true to confirm you have authorization to scan this target.")
-
-        pre_authorized, pre_auth_reason = is_authorized_without_verification(target_url)
-        verified = is_domain_verified(db, user.id, target_url)
-        if not (verified or pre_authorized):
-            _block(
-                "Active scans require verified domain ownership. "
-                f"Verify {target_domain} first, or scan a public demo target / localhost."
-            )
-
+        # ── Multi-user mode: also enforce concurrent/daily limits ────────
         plan_code = _get_plan_code(db, user)
         ok, running, limit = _check_concurrent_limit(db, user.id, plan_code)
         if not ok:
