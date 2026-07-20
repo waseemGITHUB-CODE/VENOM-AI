@@ -3210,6 +3210,13 @@ function _handleNewAlert(alert) {
   const host = (() => { try { return new URL(alert.target_url).hostname; } catch { return alert.target_url; } })();
   _showToast(`${icon} ${alert.message} — ${host}`, alert.type === 'scan_error' ? 'warn' : 'alert');
 
+  // 2b. Fire an immediate strike on the 3D monitoring globe for a real finding,
+  //     so a live vulnerability shows up in the animation the moment it's found.
+  if (alert.type === 'new_vuln' || alert.type === 'score_drop') {
+    const sev = (alert.severity || (alert.type === 'new_vuln' ? 'critical' : 'high'));
+    try { MonitorViz.threat(sev); } catch (_) {}
+  }
+
   // 3. Browser desktop notification (works even when tab is in background)
   if (_monNotifsEnabled && Notification.permission === 'granted') {
     const title = `VENOM AI · ${_alertTypeName[alert.type] || 'Alert'}`;
@@ -3333,6 +3340,13 @@ const MonitorViz = (function () {
   const TICK_MS = 33;
   let canvas = null, ctx = null, timer = null, t = 0, W = 0, H = 0, count = 0;
   const ACID = '57,255,20', CYAN = '79,195,247';
+  // Severity → colour for real-time threat strikes / markers
+  const SEV_COL = { critical: '255,23,68', high: '251,140,0', medium: '249,168,37', low: '0,230,118', info: '79,195,247' };
+  // threats = transient "incoming strike" effects; markers = persistent glowing
+  // dots left on the globe for each vuln found (like the attack graph keeps its
+  // nodes). Both carry a lon/lat so they rotate with the globe.
+  let threats = [], markers = [], threatTotal = 0;
+  const STRIKE_LIFE = 0.9;   // in t-units (~2.5s)
 
   (function injectKeyframes() {
     const s = document.createElement('style');
@@ -3351,6 +3365,14 @@ const MonitorViz = (function () {
 
   function rotY(x, z, a) { const c = Math.cos(a), s = Math.sin(a); return [x * c - z * s, x * s + z * c]; }
   function proj(x, y, z, cx, cy) { const p = 300 / (300 + z); return [cx + x * p, cy + y * p, p]; }
+  // Project a point on the globe surface (given lon/lat in radians) to screen,
+  // accounting for the current rotation. Returns [px, py, perspective, frontness].
+  function surfacePoint(lon, lat, R, ay, cx, cy) {
+    const x = R * Math.cos(lat) * Math.cos(lon), y = R * Math.sin(lat), z = R * Math.cos(lat) * Math.sin(lon);
+    const [xr, zr] = rotY(x, z, ay);
+    const [px, py, p] = proj(xr, y, zr, cx, cy);
+    return [px, py, p, zr];   // zr < 0 ⇒ front-facing hemisphere
+  }
 
   function draw() {
     syncSize();
@@ -3421,13 +3443,56 @@ const MonitorViz = (function () {
       ctx.shadowColor = `rgba(${col},0.9)`; ctx.shadowBlur = 9;
       ctx.fill(); ctx.shadowBlur = 0;
     });
+
+    // ── Persistent vuln markers stuck on the globe surface ──────────────
+    markers.forEach(m => {
+      const [px, py, p, zr] = surfacePoint(m.lon, m.lat, R, ay, cx, cy);
+      const front = zr < 0;                         // hemisphere facing viewer
+      const pulse = 0.6 + 0.4 * Math.sin(t * 4 + m.lon);
+      const a = (front ? 0.9 : 0.28) * pulse;
+      ctx.beginPath(); ctx.arc(px, py, (front ? 3.2 : 2) * p, 0, 7);
+      ctx.fillStyle = `rgba(${m.col},${a})`;
+      if (front) { ctx.shadowColor = `rgba(${m.col},0.9)`; ctx.shadowBlur = 10; }
+      ctx.fill(); ctx.shadowBlur = 0;
+    });
+
+    // ── Real-time threat strikes (incoming bolt → shockwave → flare) ────
+    threats = threats.filter(th => (t - th.born) < STRIKE_LIFE);
+    threats.forEach(th => {
+      const age = t - th.born, prog = age / STRIKE_LIFE;
+      const [ix, iy] = surfacePoint(th.lon, th.lat, R, ay, cx, cy);
+      const dx = ix - cx, dy = iy - cy, d = Math.hypot(dx, dy) || 1;
+      const ux = dx / d, uy = dy / d;
+      const outside = [cx + ux * (R * 2.6 + 40), cy + uy * (R * 2.6 + 40)];
+      if (prog < 0.42) {                            // incoming bolt
+        const f = prog / 0.42;
+        const hx = outside[0] + (ix - outside[0]) * f, hy = outside[1] + (iy - outside[1]) * f;
+        const tx = outside[0] + (ix - outside[0]) * Math.max(0, f - 0.28);
+        const ty = outside[1] + (iy - outside[1]) * Math.max(0, f - 0.28);
+        const lg = ctx.createLinearGradient(tx, ty, hx, hy);
+        lg.addColorStop(0, `rgba(${th.col},0)`); lg.addColorStop(1, `rgba(${th.col},0.95)`);
+        ctx.strokeStyle = lg; ctx.lineWidth = 2.2; ctx.shadowColor = `rgba(${th.col},0.9)`; ctx.shadowBlur = 8;
+        ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(hx, hy); ctx.stroke(); ctx.shadowBlur = 0;
+      } else {                                       // impact shockwave + flare
+        const f = (prog - 0.42) / 0.58;
+        ctx.beginPath(); ctx.arc(ix, iy, f * R * 0.9, 0, 7);
+        ctx.strokeStyle = `rgba(${th.col},${0.6 * (1 - f)})`; ctx.lineWidth = 2; ctx.stroke();
+        ctx.beginPath(); ctx.arc(ix, iy, 4 * (1 - f) + 2, 0, 7);
+        ctx.fillStyle = `rgba(${th.col},${0.9 * (1 - f)})`;
+        ctx.shadowColor = `rgba(${th.col},1)`; ctx.shadowBlur = 12; ctx.fill(); ctx.shadowBlur = 0;
+      }
+    });
   }
 
   function subText() {
     const sub = document.getElementById('mon-viz-sub');
-    if (sub) sub.textContent = count > 0
-      ? `Scanning ${count} target${count === 1 ? '' : 's'} in real time…`
-      : 'Standing by…';
+    if (!sub) return;
+    const base = count > 0 ? `Scanning ${count} target${count === 1 ? '' : 's'} in real time` : 'Standing by';
+    if (threatTotal > 0) {
+      sub.innerHTML = `${base} · <span style="color:#ff5470">⚠ ${threatTotal} threat${threatTotal === 1 ? '' : 's'} detected</span>`;
+    } else {
+      sub.textContent = base + '…';
+    }
   }
 
   return {
@@ -3444,6 +3509,22 @@ const MonitorViz = (function () {
       if (!timer) timer = setInterval(draw, TICK_MS);
     },
     setCount(activeCount) { count = activeCount || 0; subText(); },
+    // Fire an immediate threat strike on the globe + drop a persistent marker.
+    // Called from the real-time alert stream the moment a monitor scan finds a
+    // vulnerability, so a live finding shows up in the animation at once.
+    threat(severity) {
+      const col = SEV_COL[(severity || 'high').toLowerCase()] || SEV_COL.high;
+      const lon = Math.random() * Math.PI * 2;
+      const lat = (Math.random() - 0.5) * Math.PI * 0.8;
+      threats.push({ born: t, col, lon, lat });
+      markers.push({ col, lon, lat });
+      if (markers.length > 14) markers.shift();     // cap accumulated markers
+      threatTotal++;
+      subText();
+      // If the viz isn't currently animating (e.g. page just opened), a start()
+      // will pick these up; force a repaint if the timer is already running.
+    },
+    clearThreats() { threats = []; markers = []; threatTotal = 0; subText(); },
     stop() {
       if (timer) { clearInterval(timer); timer = null; }
       const card = document.getElementById('mon-viz-card');
