@@ -3006,7 +3006,8 @@ async function monRefresh() {
     // Drive the live 3D visualisation — runs only while monitoring is active
     // AND the monitoring page is open (RAF is stopped otherwise).
     const onMonPage = document.getElementById('page-monitoring').classList.contains('active');
-    if (active > 0 && onMonPage) MonitorViz.start(active);
+    const monitors = mData.monitors || [];
+    if (monitors.length && onMonPage) MonitorViz.start(monitors);
     else MonitorViz.stop();
 
     // Update nav badge
@@ -3214,7 +3215,7 @@ function _handleNewAlert(alert) {
   //     so a live vulnerability shows up in the animation the moment it's found.
   if (alert.type === 'new_vuln' || alert.type === 'score_drop') {
     const sev = (alert.severity || (alert.type === 'new_vuln' ? 'critical' : 'high'));
-    try { MonitorViz.threat(sev); } catch (_) {}
+    try { MonitorViz.threat(sev, alert.target_url); } catch (_) {}
   }
 
   // 3. Browser desktop notification (works even when tab is in background)
@@ -3328,25 +3329,23 @@ function showPage(id, btn) {
   if (id === 'billing') loadBillingPage();
 }
 
-// ─── Continuous-Monitoring 3D visualisation ─────────────────────────────────
-// A self-contained canvas render (no external libs): a rotating wireframe
-// globe with a radar sweep, expanding pulse rings, and one orbiting satellite
-// node per active monitor target. Shown only while ≥1 target is being watched;
-// the RAF loop is stopped whenever monitoring goes idle or the page is left,
-// so it costs nothing when not visible.
+// ─── Continuous-Monitoring live attack-flow visualisation ───────────────────
+// Styled like the Attack Graph: an Attacker node on the left with animated
+// flow lines reaching out to each monitored target (nodes on the right). While
+// a scan is watching, packets stream along the lines; the moment a scan reports
+// a finding, a severity-coloured strike travels down that target's line and the
+// target lights up with a threat badge. setInterval-driven so it keeps
+// animating even when the browser pane isn't the focused tab.
 const MonitorViz = (function () {
-  // setInterval-driven (see _scanBar note) so it animates even when the
-  // browser pane isn't the focused tab.
   const TICK_MS = 33;
   let canvas = null, ctx = null, timer = null, t = 0, W = 0, H = 0, count = 0;
-  const ACID = '57,255,20', CYAN = '79,195,247';
-  // Severity → colour for real-time threat strikes / markers
+  const ACID = '57,255,20', CYAN = '79,195,247', RED = '255,23,68';
   const SEV_COL = { critical: '255,23,68', high: '251,140,0', medium: '249,168,37', low: '0,230,118', info: '79,195,247' };
-  // threats = transient "incoming strike" effects; markers = persistent glowing
-  // dots left on the globe for each vuln found (like the attack graph keeps its
-  // nodes). Both carry a lon/lat so they rotate with the globe.
-  let threats = [], markers = [], threatTotal = 0;
-  const STRIKE_LIFE = 0.9;   // in t-units (~2.5s)
+  let nodes = [];              // {url, host, x, y, threats, col}
+  let strikes = [];            // transient travelling bolts {ni, born, col}
+  let threatTotal = 0;
+  const threatByHost = {};     // persistent threat counts per host (survive refreshes)
+  const TRAVEL = 0.45, FLASH = 0.4;   // t-units
 
   (function injectKeyframes() {
     const s = document.createElement('style');
@@ -3363,123 +3362,105 @@ const MonitorViz = (function () {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
-  function rotY(x, z, a) { const c = Math.cos(a), s = Math.sin(a); return [x * c - z * s, x * s + z * c]; }
-  function proj(x, y, z, cx, cy) { const p = 300 / (300 + z); return [cx + x * p, cy + y * p, p]; }
-  // Project a point on the globe surface (given lon/lat in radians) to screen,
-  // accounting for the current rotation. Returns [px, py, perspective, frontness].
-  function surfacePoint(lon, lat, R, ay, cx, cy) {
-    const x = R * Math.cos(lat) * Math.cos(lon), y = R * Math.sin(lat), z = R * Math.cos(lat) * Math.sin(lon);
-    const [xr, zr] = rotY(x, z, ay);
-    const [px, py, p] = proj(xr, y, zr, cx, cy);
-    return [px, py, p, zr];   // zr < 0 ⇒ front-facing hemisphere
+  function hostOf(u) {
+    try { return new URL(u).hostname; }
+    catch { return (u || '').replace(/^https?:\/\//, '').split('/')[0] || 'target'; }
+  }
+
+  // Cubic bezier from attacker (ax,ay) to node (bx,by); returns [x,y] at u and,
+  // when needed, the control points for stroking the path.
+  function ctrl(ax, ay, bx, by) {
+    return [ax + (bx - ax) * 0.45, ay, bx - (bx - ax) * 0.45, by];
+  }
+  function bezPt(ax, ay, bx, by, u) {
+    const [c1x, c1y, c2x, c2y] = ctrl(ax, ay, bx, by), m = 1 - u;
+    return [
+      m*m*m*ax + 3*m*m*u*c1x + 3*m*u*u*c2x + u*u*u*bx,
+      m*m*m*ay + 3*m*m*u*c1y + 3*m*u*u*c2y + u*u*u*by,
+    ];
+  }
+
+  function attackerPos() { return [Math.max(52, W * 0.12), H / 2]; }
+  function layout() {
+    const [ax, ay] = attackerPos();
+    const tx = W * 0.52, top = 74, bot = H - 30, span = Math.max(0, bot - top), n = nodes.length;
+    nodes.forEach((nd, i) => { nd.x = tx; nd.y = n <= 1 ? H / 2 : top + span * (i / (n - 1)); });
+    return [ax, ay];
   }
 
   function draw() {
     syncSize();
     t += 0.012;
     ctx.clearRect(0, 0, W, H);
-    const cx = W / 2, cy = H / 2, R = Math.min(W, H) * 0.34, ay = t * 0.5;
+    if (!nodes.length) return;
+    const [ax, ay] = layout();
 
-    // Core glow
-    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, R * 0.9);
-    g.addColorStop(0, `rgba(${ACID},0.18)`); g.addColorStop(1, `rgba(${ACID},0)`);
-    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, R * 0.9, 0, 7); ctx.fill();
+    // ── Flow lines: Attacker → each target (animated dashes = live probing) ──
+    nodes.forEach((nd, i) => {
+      const [c1x, c1y, c2x, c2y] = ctrl(ax, ay, nd.x, nd.y);
+      const hot = nd.threats > 0, col = hot ? nd.col : ACID;
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.bezierCurveTo(c1x, c1y, c2x, c2y, nd.x, nd.y);
+      ctx.setLineDash([5, 9]); ctx.lineDashOffset = -((t * 40) % 14);
+      ctx.strokeStyle = `rgba(${col},${hot ? 0.5 : 0.26})`; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.setLineDash([]);
+      // a steady "scan packet" gliding along each clean line so it always looks alive
+      const u = ((t * 0.35 + i * 0.2) % 1);
+      const [px, py] = bezPt(ax, ay, nd.x, nd.y, u);
+      ctx.beginPath(); ctx.arc(px, py, 2, 0, 7);
+      ctx.fillStyle = `rgba(${col},0.7)`; ctx.fill();
+    });
 
-    // Latitude rings
-    for (let lat = -60; lat <= 60; lat += 30) {
-      const rl = Math.cos(lat * Math.PI / 180) * R, yl = Math.sin(lat * Math.PI / 180) * R;
-      ctx.beginPath();
-      for (let lon = 0; lon <= 360; lon += 12) {
-        const a = lon * Math.PI / 180, [xr, zr] = rotY(Math.cos(a) * rl, Math.sin(a) * rl, ay);
-        const [px, py] = proj(xr, yl, zr, cx, cy);
-        lon ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+    // ── Travelling threat strikes → impact flash on the target ──────────────
+    strikes = strikes.filter(s => (t - s.born) < TRAVEL + FLASH);
+    strikes.forEach(s => {
+      const nd = nodes[s.ni]; if (!nd) return;
+      const age = t - s.born;
+      if (age < TRAVEL) {
+        const u = age / TRAVEL, [px, py] = bezPt(ax, ay, nd.x, nd.y, u);
+        ctx.beginPath(); ctx.arc(px, py, 4, 0, 7);
+        ctx.fillStyle = `rgba(${s.col},1)`; ctx.shadowColor = `rgba(${s.col},1)`; ctx.shadowBlur = 12;
+        ctx.fill(); ctx.shadowBlur = 0;
+      } else {
+        const f = (age - TRAVEL) / FLASH;
+        ctx.beginPath(); ctx.arc(nd.x, nd.y, 15 + f * 22, 0, 7);
+        ctx.strokeStyle = `rgba(${s.col},${0.75 * (1 - f)})`; ctx.lineWidth = 2; ctx.stroke();
       }
-      ctx.strokeStyle = `rgba(${ACID},0.13)`; ctx.lineWidth = 1; ctx.stroke();
-    }
-    // Longitude arcs
-    for (let lon = 0; lon < 180; lon += 30) {
-      ctx.beginPath();
-      for (let lat = -90; lat <= 90; lat += 10) {
-        const rl = Math.cos(lat * Math.PI / 180) * R, yl = Math.sin(lat * Math.PI / 180) * R;
-        const a = lon * Math.PI / 180, [xr, zr] = rotY(Math.cos(a) * rl, Math.sin(a) * rl, ay);
-        const [px, py] = proj(xr, yl, zr, cx, cy);
-        lat === -90 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
-      }
-      ctx.strokeStyle = `rgba(${ACID},0.10)`; ctx.lineWidth = 1; ctx.stroke();
-    }
+    });
 
-    // Expanding pulse rings
-    for (let k = 0; k < 3; k++) {
-      const pr = ((t * 26 + k * (R / 3 * 2)) % (R * 2));
-      if (pr <= R * 2) {
-        ctx.beginPath(); ctx.arc(cx, cy, pr / 2, 0, 7);
-        ctx.strokeStyle = `rgba(${ACID},${0.22 * (1 - pr / (R * 2))})`; ctx.lineWidth = 1.4; ctx.stroke();
-      }
+    // ── Attacker node ───────────────────────────────────────────────────────
+    for (let k = 0; k < 2; k++) {
+      const pr = ((t * 22 + k * 22) % 44);
+      ctx.beginPath(); ctx.arc(ax, ay, 18 + pr * 0.5, 0, 7);
+      ctx.strokeStyle = `rgba(${RED},${0.25 * (1 - pr / 44)})`; ctx.lineWidth = 1.4; ctx.stroke();
     }
+    ctx.beginPath(); ctx.arc(ax, ay, 19, 0, 7);
+    ctx.fillStyle = `rgba(${RED},0.14)`; ctx.fill();
+    ctx.strokeStyle = `rgba(${RED},0.9)`; ctx.lineWidth = 1.8;
+    ctx.shadowColor = `rgba(${RED},0.7)`; ctx.shadowBlur = 10; ctx.stroke(); ctx.shadowBlur = 0;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = '16px serif'; ctx.fillText('☠', ax, ay + 1);
+    ctx.font = '9px monospace'; ctx.fillStyle = '#ff5470'; ctx.fillText('ATTACKER', ax, ay + 33);
 
-    // Radar sweep
-    const sweep = (t * 1.3) % (Math.PI * 2);
-    const sg = ctx.createLinearGradient(cx, cy, cx + Math.cos(sweep) * R, cy + Math.sin(sweep) * R);
-    sg.addColorStop(0, `rgba(${ACID},0.4)`); sg.addColorStop(1, `rgba(${ACID},0)`);
-    ctx.strokeStyle = sg; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(sweep) * R, cy + Math.sin(sweep) * R); ctx.stroke();
-
-    // Orbiting satellite nodes — one per active target (min 3 for a lively look)
-    const n = Math.max(count, 3);
-    const nodes = [];
-    for (let i = 0; i < n; i++) {
-      const phase = t * 0.85 + i * (Math.PI * 2 / n);
-      const incl = ((i % 3) - 1) * 0.55, orb = R * 1.4;
-      const [xr, zr] = rotY(Math.cos(phase) * orb, Math.sin(phase) * orb, ay);
-      const y = Math.sin(phase) * orb * Math.sin(incl);
-      const [px, py, p] = proj(xr, y, zr, cx, cy);
-      nodes.push({ px, py, p, real: i < count });
-    }
-    nodes.sort((a, b) => a.p - b.p);  // draw far→near
+    // ── Target nodes ────────────────────────────────────────────────────────
     nodes.forEach(nd => {
-      const col = nd.real ? ACID : CYAN;
-      ctx.beginPath(); ctx.arc(nd.px, nd.py, 2 + nd.p * 2.6, 0, 7);
-      ctx.fillStyle = `rgba(${col},${0.4 + nd.p * 0.5})`;
-      ctx.shadowColor = `rgba(${col},0.9)`; ctx.shadowBlur = 9;
-      ctx.fill(); ctx.shadowBlur = 0;
-    });
-
-    // ── Persistent vuln markers stuck on the globe surface ──────────────
-    markers.forEach(m => {
-      const [px, py, p, zr] = surfacePoint(m.lon, m.lat, R, ay, cx, cy);
-      const front = zr < 0;                         // hemisphere facing viewer
-      const pulse = 0.6 + 0.4 * Math.sin(t * 4 + m.lon);
-      const a = (front ? 0.9 : 0.28) * pulse;
-      ctx.beginPath(); ctx.arc(px, py, (front ? 3.2 : 2) * p, 0, 7);
-      ctx.fillStyle = `rgba(${m.col},${a})`;
-      if (front) { ctx.shadowColor = `rgba(${m.col},0.9)`; ctx.shadowBlur = 10; }
-      ctx.fill(); ctx.shadowBlur = 0;
-    });
-
-    // ── Real-time threat strikes (incoming bolt → shockwave → flare) ────
-    threats = threats.filter(th => (t - th.born) < STRIKE_LIFE);
-    threats.forEach(th => {
-      const age = t - th.born, prog = age / STRIKE_LIFE;
-      const [ix, iy] = surfacePoint(th.lon, th.lat, R, ay, cx, cy);
-      const dx = ix - cx, dy = iy - cy, d = Math.hypot(dx, dy) || 1;
-      const ux = dx / d, uy = dy / d;
-      const outside = [cx + ux * (R * 2.6 + 40), cy + uy * (R * 2.6 + 40)];
-      if (prog < 0.42) {                            // incoming bolt
-        const f = prog / 0.42;
-        const hx = outside[0] + (ix - outside[0]) * f, hy = outside[1] + (iy - outside[1]) * f;
-        const tx = outside[0] + (ix - outside[0]) * Math.max(0, f - 0.28);
-        const ty = outside[1] + (iy - outside[1]) * Math.max(0, f - 0.28);
-        const lg = ctx.createLinearGradient(tx, ty, hx, hy);
-        lg.addColorStop(0, `rgba(${th.col},0)`); lg.addColorStop(1, `rgba(${th.col},0.95)`);
-        ctx.strokeStyle = lg; ctx.lineWidth = 2.2; ctx.shadowColor = `rgba(${th.col},0.9)`; ctx.shadowBlur = 8;
-        ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(hx, hy); ctx.stroke(); ctx.shadowBlur = 0;
-      } else {                                       // impact shockwave + flare
-        const f = (prog - 0.42) / 0.58;
-        ctx.beginPath(); ctx.arc(ix, iy, f * R * 0.9, 0, 7);
-        ctx.strokeStyle = `rgba(${th.col},${0.6 * (1 - f)})`; ctx.lineWidth = 2; ctx.stroke();
-        ctx.beginPath(); ctx.arc(ix, iy, 4 * (1 - f) + 2, 0, 7);
-        ctx.fillStyle = `rgba(${th.col},${0.9 * (1 - f)})`;
-        ctx.shadowColor = `rgba(${th.col},1)`; ctx.shadowBlur = 12; ctx.fill(); ctx.shadowBlur = 0;
+      const hot = nd.threats > 0, col = hot ? nd.col : ACID;
+      const pulse = hot ? 0.7 + 0.3 * Math.sin(t * 5) : 1;
+      ctx.beginPath(); ctx.arc(nd.x, nd.y, 14, 0, 7);
+      ctx.fillStyle = `rgba(${col},0.13)`; ctx.fill();
+      ctx.strokeStyle = `rgba(${col},${0.9 * pulse})`; ctx.lineWidth = 1.7;
+      ctx.shadowColor = `rgba(${col},0.7)`; ctx.shadowBlur = hot ? 12 : 6; ctx.stroke(); ctx.shadowBlur = 0;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = '13px serif'; ctx.fillText(hot ? '🎯' : '🛡', nd.x, nd.y + 1);
+      // host label
+      ctx.textAlign = 'left'; ctx.font = '10px monospace'; ctx.fillStyle = 'rgba(201,212,230,0.9)';
+      const lbl = nd.host.length > 20 ? nd.host.slice(0, 19) + '…' : nd.host;
+      ctx.fillText(lbl, nd.x + 22, nd.y + 1);
+      // threat count badge
+      if (hot) {
+        const bx = nd.x + 12, by = nd.y - 12;
+        ctx.beginPath(); ctx.arc(bx, by, 7, 0, 7); ctx.fillStyle = `rgba(${RED},0.95)`; ctx.fill();
+        ctx.textAlign = 'center'; ctx.font = '9px monospace'; ctx.fillStyle = '#fff';
+        ctx.fillText(String(nd.threats), bx, by + 1);
       }
     });
   }
@@ -3496,35 +3477,50 @@ const MonitorViz = (function () {
   }
 
   return {
-    start(activeCount) {
-      count = activeCount || 0;
+    // Accepts the monitors array (objects with target_url) OR a plain count.
+    start(monitors) {
+      const list = Array.isArray(monitors)
+        ? monitors
+        : Array.from({ length: monitors || 0 }, (_, i) => ({ target_url: `target-${i + 1}` }));
       const card = document.getElementById('mon-viz-card');
       canvas = document.getElementById('mon-viz-canvas');
       if (!card || !canvas) return;
+      if (!list.length) { this.stop(); return; }
       card.style.display = 'block';
       ctx = ctx || canvas.getContext('2d');
+      count = list.length;
+      nodes = list.slice(0, 8).map(m => {
+        const host = hostOf(m.target_url || m.url || '');
+        return { url: m.target_url || m.url || '', host, x: 0, y: 0, threats: threatByHost[host] || 0, col: SEV_COL.high };
+      });
       subText();
       syncSize();
-      draw();  // paint one frame immediately
+      draw();
       if (!timer) timer = setInterval(draw, TICK_MS);
     },
-    setCount(activeCount) { count = activeCount || 0; subText(); },
-    // Fire an immediate threat strike on the globe + drop a persistent marker.
-    // Called from the real-time alert stream the moment a monitor scan finds a
-    // vulnerability, so a live finding shows up in the animation at once.
-    threat(severity) {
+    setCount() { subText(); },
+    // Fire a strike down the line to the affected target (matched by URL), and
+    // leave a persistent threat badge on it — called from the live alert stream.
+    threat(severity, url) {
       const col = SEV_COL[(severity || 'high').toLowerCase()] || SEV_COL.high;
-      const lon = Math.random() * Math.PI * 2;
-      const lat = (Math.random() - 0.5) * Math.PI * 0.8;
-      threats.push({ born: t, col, lon, lat });
-      markers.push({ col, lon, lat });
-      if (markers.length > 14) markers.shift();     // cap accumulated markers
+      const host = url ? hostOf(url) : null;
+      let ni = host ? nodes.findIndex(n => n.host === host) : -1;
+      if (ni < 0 && nodes.length) ni = Math.floor(Math.random() * nodes.length);
+      if (ni >= 0) {
+        strikes.push({ ni, born: t, col });
+        nodes[ni].threats = (nodes[ni].threats || 0) + 1;
+        nodes[ni].col = col;
+      }
+      if (host) threatByHost[host] = (threatByHost[host] || 0) + 1;
       threatTotal++;
       subText();
-      // If the viz isn't currently animating (e.g. page just opened), a start()
-      // will pick these up; force a repaint if the timer is already running.
     },
-    clearThreats() { threats = []; markers = []; threatTotal = 0; subText(); },
+    clearThreats() {
+      strikes = []; threatTotal = 0;
+      nodes.forEach(n => { n.threats = 0; });
+      for (const k in threatByHost) delete threatByHost[k];
+      subText();
+    },
     stop() {
       if (timer) { clearInterval(timer); timer = null; }
       const card = document.getElementById('mon-viz-card');
