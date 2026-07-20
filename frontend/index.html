@@ -3319,7 +3319,7 @@ function showPage(id, btn) {
   if (id === 'compliance') loadCompliance();
   if (id === 'scanner') loadHistory();
   if (id === 'reports') loadReportsList();
-  if (id === 'monitoring') { applyPlanGates(); if (_planAllowsMonitoring(window._userBilling)) { monRefresh(); _monStartHeartbeat(); _updateNotifBtn(); monLoadEmailSettings(); } }
+  if (id === 'monitoring') { applyPlanGates(); if (_planAllowsMonitoring(window._userBilling)) { monRefresh(); _monStartHeartbeat(); _updateNotifBtn(); monLoadEmailSettings(); if (!_monSSE) _startAlertStream(); } }
   else { try { MonitorViz.stop(); } catch (_) {} }   // pause the 3D viz when off the monitoring page
   if (id === 'chat') { applyPlanGates(); if (_planAllowsChat(window._userBilling)) renderChatSidebar(); }
   if (id === 'pricing') loadPricingPage();
