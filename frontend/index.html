@@ -4575,9 +4575,16 @@ function renderOwasp2025Results(data) {
           </div>
           <pre id="ai-fix-owasp-${f.id||0}" style="background:#050810; border:1px solid var(--border, rgba(57,255,20,.2)); border-radius:4px; padding:12px 14px; font-family:var(--mono); font-size:11px; color:var(--acid2,#7ee787); white-space:pre-wrap; word-break:break-word; line-height:1.6; margin-top:8px; overflow-x:auto;">${esc(f.ai_code_fix)}</pre>
         </div>` : ''}
-        <div style="margin-top:10px; display:flex; justify-content:flex-end;">
+        <div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+          ${(() => {
+            const cweNum = (f.cwe_id || '').replace(/\D/g, '');
+            const refUrl = f.reference || (cweNum ? `https://cwe.mitre.org/data/definitions/${cweNum}.html` : 'https://owasp.org/Top10/');
+            return `<a href="${esc(refUrl)}" target="_blank" rel="noopener" class="btn btn-ghost btn-sm">Reference ↗</a>`;
+          })()}
+          <button class="btn btn-ghost btn-sm" onclick="askAutoFix('${encodeURIComponent(f.title||'')}','${encodeURIComponent(f.description||f.recommendation||'')}')">🔧 ${f.ai_code_fix ? 'Re-generate Fix' : 'Get Code Fix'}</button>
+          <button class="btn btn-ghost btn-sm" onclick="discussFinding('${encodeURIComponent(f.title||'')}','${encodeURIComponent(f.owasp||'')}','${encodeURIComponent(f.severity||'')}','${encodeURIComponent(f.affected_url||'')}')">💬 Ask VENOM</button>
           <button onclick="markFalsePositive(${f.id||0}, this)" title="Hide this as a false positive (won't reappear on re-scan)"
-            style="font-size:10px; background:none; border:1px solid var(--border); color:var(--muted); border-radius:5px; padding:4px 10px; cursor:pointer;"
+            style="margin-left:auto; font-size:10px; background:none; border:1px solid var(--border); color:var(--muted); border-radius:5px; padding:4px 10px; cursor:pointer;"
             onmouseover="this.style.color='#ff5470';this.style.borderColor='rgba(255,23,68,.4)'" onmouseout="this.style.color='var(--muted)';this.style.borderColor='var(--border)'">✕ False positive</button>
         </div>
       </div>
@@ -7033,6 +7040,11 @@ function renderNHIResults(findings, scanData) {
           ${f.source_label ? `<div style="font-family:var(--mono);font-size:9px;color:var(--cyan);margin-top:2px">📂 ${escapeHtml(f.source_label)}</div>` : ''}
           <div class="nhi-evidence" style="margin-top:4px">${escapeHtml(f.evidence)}</div>
           ${f.recommendation ? `<div style="font-family:var(--mono);font-size:9px;color:var(--acid2);margin-top:4px;line-height:1.5">💡 ${escapeHtml(f.recommendation)}</div>` : ''}
+          <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <a href="https://cwe.mitre.org/data/definitions/798.html" target="_blank" rel="noopener" class="btn btn-ghost btn-sm">Reference ↗</a>
+            <button class="btn btn-ghost btn-sm" onclick="askAutoFix('${encodeURIComponent(f.type||'')}','${encodeURIComponent(f.description||f.recommendation||'')}')">🔧 Get Code Fix</button>
+            <button class="btn btn-ghost btn-sm" onclick="discussFinding('${encodeURIComponent(f.type||'')}','${encodeURIComponent('NHI / Exposed Secret')}','${encodeURIComponent(f.severity||'')}','${encodeURIComponent(f.source_label||'')}')">💬 Ask VENOM</button>
+          </div>
         </div>
         <span class="sev ${f.severity}">${f.severity}</span>
       </div>`).join('')}
@@ -7058,6 +7070,24 @@ function sendChip(btn) {
 }
 function chatAboutVuln(title) {
   const q = `Explain the vulnerability "${decodeURIComponent(title)}" in detail — how it works, how attackers exploit it, and how to fix it with code examples.`;
+  document.getElementById('chat-inp').value = q;
+  showPage('chat', document.querySelector('[onclick*=chat]'));
+  sendChat();
+}
+// Richer "Ask VENOM" for a specific finding — carries the finding's context
+// (OWASP/category, severity, affected URL) into the chat so the answer is
+// specific to THIS finding instead of a generic explanation.
+function discussFinding(title, tag, severity, url) {
+  title = decodeURIComponent(title || '');
+  tag = decodeURIComponent(tag || '');
+  severity = decodeURIComponent(severity || '');
+  url = decodeURIComponent(url || '');
+  const bits = [];
+  if (tag) bits.push(tag);
+  if (severity) bits.push(severity.toUpperCase());
+  if (url) bits.push(`on ${url}`);
+  const ctx = bits.length ? ` (${bits.join(' · ')})` : '';
+  const q = `My scan found "${title}"${ctx}. Explain how an attacker would exploit it, how serious it is for my target, and give me a concrete code fix with the vulnerable and patched versions.`;
   document.getElementById('chat-inp').value = q;
   showPage('chat', document.querySelector('[onclick*=chat]'));
   sendChat();
